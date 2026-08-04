@@ -25,6 +25,7 @@
 - Authentication messages now distinguish account creation, login blocked pending confirmation, invalid or expired links, and successful activation. Resend responses remain account-enumeration safe.
 - The Brevo transport is implemented entirely inside PocketBase's deferred mailer callback; this avoids losing module-scoped function references when PocketBase executes the hook.
 - Confirmation links resolve their origin directly from `NEXT_PUBLIC_APP_URL`, and PocketBase synchronizes its persisted application URL at each startup to prevent localhost links in production mail.
+- The corrected production email uses the distinct subject `Activate your NiceToMeetU account` and names the public domain in its body so mail clients do not hide it inside the earlier broken email thread.
 - VPS deployment now fails before migrations when neither Brevo nor a complete SMTP fallback is configured.
 
 ## Validation evidence

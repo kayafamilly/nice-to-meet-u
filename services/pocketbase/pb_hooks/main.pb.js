@@ -156,8 +156,8 @@ routerAdd("POST", "/api/ntmy/auth/request-verification", (e) => {
   var message = new MailerMessage({
     from: { address: settings.meta.senderAddress, name: settings.meta.senderName },
     to: [{ address: user.email() }],
-    subject: "Confirm your NiceToMeetU email",
-    html: "<p>Hello,</p><p>Confirm your email address to activate your NiceToMeetU account and start practising with international language groups.</p><p><a href=\"" + actionUrl + "\" target=\"_blank\" rel=\"noopener\">Confirm my email</a></p><p>If you did not create this account, you can ignore this email.</p>"
+    subject: "Activate your NiceToMeetU account",
+    html: "<p>Hello,</p><p>Confirm your email address to activate your NiceToMeetU account and start practising with international language groups.</p><p><a href=\"" + actionUrl + "\" target=\"_blank\" rel=\"noopener\">Activate my account</a></p><p>This secure link opens <strong>nice-to-meet-u.com</strong>. Ignore any older confirmation email that opens a local address.</p><p>If you did not create this account, you can ignore this email.</p>"
   });
   e.app.newMailClient().send(message);
   return e.json(200, { accepted: true });
