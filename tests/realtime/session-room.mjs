@@ -201,7 +201,8 @@ async function main() {
     assert((await deniedLoginResponse).ok(), "The denied-media browser could not authenticate");
     await deniedPage.waitForURL(/\/app(?:\/|$)/);
     await deniedPage.goto(`/app/session/${session.id}/room`);
-    assert(await deniedPage.getByRole("alert").count() === 0, "Media permission was requested before the user started the device check");
+    await deniedPage.getByRole("heading", { name: "Look and sound ready to speak." }).waitFor();
+    assert(await deniedPage.locator(".room-device-error").count() === 0, "Media permission was requested before the user started the device check");
     await deniedPage.getByRole("button", { name: "Start camera and microphone test" }).click();
     await deniedPage.getByRole("alert").getByText(/access was blocked/i).waitFor();
     assert(await deniedPage.getByRole("button", { name: "Camera and microphone unavailable" }).isDisabled(), "Denied media permissions did not block room entry");
