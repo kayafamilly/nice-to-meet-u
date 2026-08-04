@@ -63,6 +63,7 @@ onBootstrap((e) => {
   var smtpPassword = $os.getenv("SMTP_PASSWORD");
   var senderAddress = $os.getenv("MAIL_SENDER_ADDRESS");
   var brevoApiKey = $os.getenv("BREVO_API_KEY");
+  var publicAppUrl = $os.getenv("NEXT_PUBLIC_APP_URL");
   if ((smtpHost || brevoApiKey) && !senderAddress) {
     throw new Error("Incomplete mail sender configuration");
   }
@@ -71,6 +72,7 @@ onBootstrap((e) => {
   }
   var settings = e.app.settings();
   settings.meta.appName = "NiceToMeetU";
+  if (publicAppUrl) settings.meta.appURL = publicAppUrl.replace(/\/+$/, "");
   settings.meta.senderName = $os.getenv("MAIL_SENDER_NAME") || "NiceToMeetU";
   if (senderAddress) settings.meta.senderAddress = senderAddress;
   if (smtpHost) {
@@ -147,8 +149,10 @@ routerAdd("POST", "/api/ntmy/auth/request-verification", (e) => {
   }
   if (user.verified()) return e.json(200, { accepted: true });
   var settings = e.app.settings();
+  var publicAppUrl = $os.getenv("NEXT_PUBLIC_APP_URL") || settings.meta.appURL;
+  if (!publicAppUrl || !/^https?:\/\//.test(publicAppUrl)) throw new Error("Invalid public application URL");
   var token = user.newVerificationToken();
-  var actionUrl = String(settings.meta.appURL || "").replace(/\/+$/, "") + "/verify-email#token=" + token;
+  var actionUrl = String(publicAppUrl).replace(/\/+$/, "") + "/verify-email#token=" + token;
   var message = new MailerMessage({
     from: { address: settings.meta.senderAddress, name: settings.meta.senderName },
     to: [{ address: user.email() }],

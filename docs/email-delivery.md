@@ -7,6 +7,7 @@ NiceToMeetU requires email confirmation before a new account can authenticate. P
 - `BREVO_API_KEY` (a standard Brevo API key, not an MCP token)
 - `MAIL_SENDER_ADDRESS`
 - `MAIL_SENDER_NAME`
+- `NEXT_PUBLIC_APP_URL` (the public site origin used in confirmation links)
 
 None of these values may use a `NEXT_PUBLIC_` prefix. PocketBase intercepts its own mailer on the server and calls `POST /v3/smtp/email`; this covers verification and password-reset messages without exposing Brevo to the browser. SMTP remains an optional fallback when `BREVO_API_KEY` is absent. Production deployment fails before migrations when neither Brevo nor a complete SMTP configuration is available.
 
@@ -24,6 +25,6 @@ The global Codex configuration points to Brevo's official Streamable HTTP server
 
 1. Registration creates the account and profile transactionally with `verified = false`.
 2. PocketBase sends a short-lived verification token to the submitted address.
-3. The link opens `/verify-email#token=…`; the fragment keeps the token out of HTTP access logs.
+3. The link opens `${NEXT_PUBLIC_APP_URL}/verify-email#token=…`; the fragment keeps the token out of HTTP access logs. PocketBase refreshes its stored public URL from this environment value at every startup so a local database value cannot leak into production emails.
 4. The BFF submits the token to a custom PocketBase route, which validates it and marks the account verified in an audited transaction.
 5. Authentication rules and the custom login route both reject unverified accounts.
