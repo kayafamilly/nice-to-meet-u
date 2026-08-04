@@ -36,6 +36,8 @@ fi
 # Secrets and PocketBase data remain outside the release checkout.
 sudo install -d -m 750 -o ntmy -g ntmy /etc/nicetomeetu /var/lib/nicetomeetu/$DEPLOYMENT/pocketbase
 sudo install -m 640 -o root -g ntmy "$env_file" "/etc/nicetomeetu/$DEPLOYMENT.env"
+sudo chown root:ntmy "$repo_root/infra/vps/rendered/$DEPLOYMENT/livekit.yaml"
+sudo chmod 640 "$repo_root/infra/vps/rendered/$DEPLOYMENT/livekit.yaml"
 sudo install -m 644 "$repo_root"/infra/vps/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable "ntmy-pocketbase@$DEPLOYMENT" "ntmy-redis@$DEPLOYMENT" "ntmy-livekit@$DEPLOYMENT" "ntmy-web@$DEPLOYMENT" "ntmy-notifications@$DEPLOYMENT" "ntmy-livekit-lifecycle@$DEPLOYMENT"
