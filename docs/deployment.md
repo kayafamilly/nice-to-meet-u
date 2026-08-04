@@ -23,7 +23,7 @@ The VPS runs native `systemd` services for PocketBase, an isolated Redis instanc
 3. The deployment puts secrets in `/etc/nicetomeetu/<deployment>.env`, stores PocketBase data in `/var/lib/nicetomeetu/<deployment>/pocketbase`, and installs all templated PocketBase, Redis, LiveKit, web, notification and lifecycle units from `infra/vps/systemd/`.
 4. Render/install the Caddyfile with the edge-domain environment, then reload Caddy. Caddy is the only public HTTP(S) process.
 
-PocketBase, Redis, Next.js and LiveKit HTTP signaling ports stay private. Allow only SSH, 80/TCP, 443/TCP, required LiveKit TCP ports, TURN UDP and the declared UDP media ranges. `scripts/verify-vps-firewall.sh` refuses deployment if a LiveKit HTTP port is exposed.
+PocketBase, Redis, Next.js and LiveKit HTTP signaling ports stay private. Allow only SSH, 80/TCP, 443/TCP, required LiveKit TCP ports, TURN UDP, the declared ICE/UDP range and the separate TURN relay range. `scripts/verify-vps-firewall.sh` refuses deployment if a required media rule is missing or a LiveKit HTTP port is exposed.
 
 ## Backup and restore
 

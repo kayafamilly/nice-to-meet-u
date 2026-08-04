@@ -22,6 +22,8 @@ set +a
 : "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}"
 : "${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}"
 : "${LIVEKIT_WEBHOOK_URL:?LIVEKIT_WEBHOOK_URL is required}"
+: "${TURN_RELAY_PORT_START:?TURN_RELAY_PORT_START is required}"
+: "${TURN_RELAY_PORT_END:?TURN_RELAY_PORT_END is required}"
 
 output_dir="$repo_root/infra/vps/rendered/$DEPLOYMENT"
 mkdir -p "$output_dir"

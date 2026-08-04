@@ -20,5 +20,7 @@ turn:
   enabled: true
   domain: ${TURN_DOMAIN}
   udp_port: ${TURN_UDP_PORT}
+  relay_range_start: ${TURN_RELAY_PORT_START}
+  relay_range_end: ${TURN_RELAY_PORT_END}
 logging:
   level: info
