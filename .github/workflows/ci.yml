@@ -93,6 +93,13 @@ jobs:
       - run: pnpm test:integration
       - run: pnpm --filter @ntmy/web exec playwright install --with-deps chromium
       - run: pnpm test:realtime
+      - name: Print native service logs after failure
+        if: failure()
+        run: |
+          for service in livekit-lifecycle ntmy-next livekit pocketbase; do
+            echo "===== $service ====="
+            tail -n 250 "$RUNNER_TEMP/$service.log" 2>/dev/null || true
+          done
       - if: always()
         run: |
           for service in livekit-lifecycle ntmy-next livekit pocketbase; do

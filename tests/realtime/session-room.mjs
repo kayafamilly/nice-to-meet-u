@@ -273,9 +273,17 @@ async function main() {
           `LiveKit token allows an unexpected publication source: ${JSON.stringify(claims.video?.canPublishSources)}`
         );
       }
-      await Promise.all(pagesToJoin.map((page) =>
-        page.getByRole("heading", { name: /^English conversation/ }).waitFor({ timeout: 20_000 })
-      ));
+      await Promise.all(pagesToJoin.map(async (page, index) => {
+        try {
+          await page.getByRole("heading", { name: /^English conversation/ }).waitFor({ timeout: 20_000 });
+        } catch {
+          throw new Error(
+            `Browser ${index + 1} did not enter the live room. ` +
+            `Visible page: ${(await page.locator("body").innerText()).slice(0, 1_200)} ` +
+            `Browser messages: ${(diagnostics.get(page) ?? []).slice(-12).join(" | ")}`
+          );
+        }
+      }));
       for (let index = 0; index < pagesToJoin.length; index += 1) connectionLatencies.push(Date.now() - requestedAt);
       return requestedAt;
     }
