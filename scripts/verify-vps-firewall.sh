@@ -55,7 +55,7 @@ fi
 require_allow_rule() {
   rule=$1
   label=$2
-  if ! printf '%s\n' "$plain_status" | grep -Eq "^${rule}[[:space:]].*ALLOW IN"; then
+  if ! printf '%s\n' "$verbose_status" | grep -Eq "^${rule}[[:space:]].*ALLOW IN"; then
     echo "Missing inbound UFW rule for ${label}: ${rule}" >&2
     exit 1
   fi
