@@ -30,7 +30,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
       const result = await response.json().catch(() => ({})) as { error?: string; emailSent?: boolean };
       if (!response.ok) {
         if (mode === "login" && result.error === "EMAIL_VERIFICATION_REQUIRED") {
-          rememberVerification(email);
+          rememberVerification(email, false, "login");
           router.replace("/verify-email" as Route);
           return;
         }
@@ -38,7 +38,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         throw new Error("We could not complete your request. Please check your information.");
       }
       if (mode === "register") {
-        rememberVerification(email, result.emailSent === false);
+        rememberVerification(email, result.emailSent === false, "registration");
         router.replace("/verify-email" as Route);
         return;
       }
@@ -60,8 +60,9 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
     {mode === "register" && <label className="field">Display name<input name="displayName" minLength={2} maxLength={40} required autoComplete="nickname" /></label>}
     <label className="field">Email<input name="email" type="email" required autoComplete="email" /></label>
     <label className="field">Password<input name="password" type="password" minLength={12} required autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
-    {mode === "login" && <div className="inline-actions"><Link className="text-button" href={"/forgot-password" as Route}>Forgot your password?</Link><Link className="text-button" href={"/verify-email" as Route}>Verify your email</Link></div>}
+    {mode === "login" && <div className="inline-actions"><Link className="text-button" href={"/forgot-password" as Route}>Forgot your password?</Link><Link className="text-button" href={"/verify-email" as Route}>Resend confirmation email</Link></div>}
     {mode === "register" && <label className="check-row"><input name="adult" type="checkbox" required /><span>I confirm that I am at least 18 years old and will practise respectfully with every member of my group.</span></label>}
+    {mode === "register" && <p className="notice" role="note">After creating your account, you must confirm your email before you can log in.</p>}
     {error && <p className="error" role="alert">{error}</p>}
     <button className="button accent" disabled={pending}>{pending ? "Please wait…" : mode === "login" ? "Log in" : "Create account"}</button>
   </form>;
