@@ -275,7 +275,7 @@ async function main() {
       }
       await Promise.all(pagesToJoin.map(async (page, index) => {
         try {
-          await page.getByRole("heading", { name: /^English conversation/ }).waitFor({ timeout: 20_000 });
+          await page.locator(".room-shell").waitFor({ state: "visible", timeout: 20_000 });
         } catch {
           throw new Error(
             `Browser ${index + 1} did not enter the live room. ` +
