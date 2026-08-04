@@ -11,6 +11,7 @@ WorkingDirectory=/opt/nicetomeetu
 EnvironmentFile=/etc/nicetomeetu/%i.env
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node /opt/nicetomeetu/scripts/notification-worker.mjs
+SuccessExitStatus=143
 Restart=always
 RestartSec=10
 NoNewPrivileges=true

@@ -12,6 +12,7 @@ EnvironmentFile=/etc/nicetomeetu/%i.env
 Environment=NODE_ENV=production
 Environment=HOSTNAME=127.0.0.1
 ExecStart=/usr/bin/env PORT=${APP_PORT} /usr/bin/node /opt/nicetomeetu/apps/web/.next/standalone/apps/web/server.js
+SuccessExitStatus=143
 Restart=always
 RestartSec=5
 NoNewPrivileges=true
