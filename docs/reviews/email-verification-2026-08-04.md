@@ -23,6 +23,7 @@
 - Registration, resend and confirmation are CSRF-protected, origin-checked and rate-limited by the BFF.
 - The Brevo API key remains server-only; PocketBase's mailer is intercepted centrally so verification and password-reset messages share the same transport.
 - Authentication messages now distinguish account creation, login blocked pending confirmation, invalid or expired links, and successful activation. Resend responses remain account-enumeration safe.
+- The Brevo transport is implemented entirely inside PocketBase's deferred mailer callback; this avoids losing module-scoped function references when PocketBase executes the hook.
 - VPS deployment now fails before migrations when neither Brevo nor a complete SMTP fallback is configured.
 
 ## Validation evidence

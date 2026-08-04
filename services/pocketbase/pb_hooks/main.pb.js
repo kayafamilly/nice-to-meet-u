@@ -6,31 +6,37 @@
 var canonicalNtmy = require(__hooks + "/ntmy.js");
 Object.keys(canonicalNtmy).forEach(function (key) { globalThis[key] = canonicalNtmy[key]; });
 
-function ntmyBrevoRecipients(recipients) {
-  return (recipients || []).map(function (recipient) {
-    var value = { email: recipient.address };
-    if (recipient.name) value.name = recipient.name;
-    return value;
-  });
-}
-
-function ntmySendWithBrevo(message) {
+// PocketBase executes mailer callbacks in a deferred hook context. Keep the
+// transport implementation inside the callback so it doesn't depend on
+// module-scoped functions that are unavailable when the hook later runs.
+onMailerSend((e) => {
   var apiKey = $os.getenv("BREVO_API_KEY");
-  if (!apiKey) return false;
+  if (!apiKey) {
+    e.next();
+    return;
+  }
+  var message = e.message;
   if (!message || !message.from || !message.from.address || !message.to || !message.to.length) {
     throw new Error("Invalid transactional email message");
   }
   if ((message.attachments && Object.keys(message.attachments).length) || (message.inlineAttachments && Object.keys(message.inlineAttachments).length)) {
     throw new Error("Brevo mail transport does not support PocketBase attachments");
   }
+  function recipients(values) {
+    return (values || []).map(function (recipient) {
+      var value = { email: recipient.address };
+      if (recipient.name) value.name = recipient.name;
+      return value;
+    });
+  }
   var payload = {
     sender: { email: message.from.address, name: message.from.name || "NiceToMeetU" },
-    to: ntmyBrevoRecipients(message.to),
+    to: recipients(message.to),
     subject: message.subject,
     tags: ["nicetomeetu", "transactional"]
   };
-  if (message.cc && message.cc.length) payload.cc = ntmyBrevoRecipients(message.cc);
-  if (message.bcc && message.bcc.length) payload.bcc = ntmyBrevoRecipients(message.bcc);
+  if (message.cc && message.cc.length) payload.cc = recipients(message.cc);
+  if (message.bcc && message.bcc.length) payload.bcc = recipients(message.bcc);
   if (message.html) payload.htmlContent = message.html;
   else payload.textContent = message.text || "";
   var response = $http.send({
@@ -47,11 +53,6 @@ function ntmySendWithBrevo(message) {
   if (response.statusCode !== 201) {
     throw new Error("Brevo transactional email failed with status " + response.statusCode);
   }
-  return true;
-}
-
-onMailerSend((e) => {
-  if (!ntmySendWithBrevo(e.message)) e.next();
 });
 
 onBootstrap((e) => {
