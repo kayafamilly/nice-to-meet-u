@@ -10,6 +10,8 @@ NiceToMeetU requires email confirmation before a new account can authenticate. P
 
 None of these values may use a `NEXT_PUBLIC_` prefix. PocketBase intercepts its own mailer on the server and calls `POST /v3/smtp/email`; this covers verification and password-reset messages without exposing Brevo to the browser. SMTP remains an optional fallback when `BREVO_API_KEY` is absent. Production deployment fails before migrations when neither Brevo nor a complete SMTP configuration is available.
 
+`MAIL_SENDER_ADDRESS` must be an active Brevo sender or belong to an authenticated Brevo domain. A `201` response only confirms that Brevo accepted the request; delivery must be checked through Brevo transactional events when activating a new sender.
+
 ## Domain delivery checklist
 
 Before production activation, verify Brevo's SPF and DKIM records and publish a DMARC policy for `nice-to-meet-u.com`. Send a PocketBase verification test message, follow the received link, and confirm that the account can authenticate only after the link is used.

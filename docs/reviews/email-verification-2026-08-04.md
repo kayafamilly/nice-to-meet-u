@@ -34,7 +34,9 @@
 - Custom confirmation route — passed with a locally generated PocketBase verification token; subsequent custom login returned `200`.
 - Browser smoke test — passed: registration redirects to `/verify-email`, the address is prefilled, an unverified login returns to that page, and no browser console errors were observed.
 - Brevo MCP transport — passed through the authorised production VPS; initialization returned `MainBrevoMCPServer 2.14.7`.
-- Brevo transactional transport — passed: `noreply@nice-to-meet-u.com` produced a `201` response for a single owner-address connection test.
+- Brevo transactional transport — the initial `noreply@nice-to-meet-u.com` request returned `201` but was later rejected because the domain sender was not authenticated; the false positive was detected in Brevo's event report.
+- Real delivery — passed with the already verified Brevo account sender: the provider recorded `requests`, `delivered`, then `opened`. This sender is active in the production PocketBase environment until the branded domain finishes authentication.
+- Branded sender preparation — `nice-to-meet-u.com` is created in Brevo and its DKIM, ownership and DMARC records are ready to be published in Hostinger DNS.
 - Production deployment — passed on commit `8d37b0c`; the email-verification migration is recorded, the users auth rule is `verified = true`, public verification and registration pages return `200`, and PocketBase/LiveKit health checks return `200`.
 
 ## Production activation gate
