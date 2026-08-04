@@ -6,6 +6,84 @@
 var canonicalNtmy = require(__hooks + "/ntmy.js");
 Object.keys(canonicalNtmy).forEach(function (key) { globalThis[key] = canonicalNtmy[key]; });
 
+function ntmyBrevoRecipients(recipients) {
+  return (recipients || []).map(function (recipient) {
+    var value = { email: recipient.address };
+    if (recipient.name) value.name = recipient.name;
+    return value;
+  });
+}
+
+function ntmySendWithBrevo(message) {
+  var apiKey = $os.getenv("BREVO_API_KEY");
+  if (!apiKey) return false;
+  if (!message || !message.from || !message.from.address || !message.to || !message.to.length) {
+    throw new Error("Invalid transactional email message");
+  }
+  if ((message.attachments && Object.keys(message.attachments).length) || (message.inlineAttachments && Object.keys(message.inlineAttachments).length)) {
+    throw new Error("Brevo mail transport does not support PocketBase attachments");
+  }
+  var payload = {
+    sender: { email: message.from.address, name: message.from.name || "NiceToMeetU" },
+    to: ntmyBrevoRecipients(message.to),
+    subject: message.subject,
+    tags: ["nicetomeetu", "transactional"]
+  };
+  if (message.cc && message.cc.length) payload.cc = ntmyBrevoRecipients(message.cc);
+  if (message.bcc && message.bcc.length) payload.bcc = ntmyBrevoRecipients(message.bcc);
+  if (message.html) payload.htmlContent = message.html;
+  else payload.textContent = message.text || "";
+  var response = $http.send({
+    method: "POST",
+    url: "https://api.brevo.com/v3/smtp/email",
+    body: JSON.stringify(payload),
+    headers: {
+      "accept": "application/json",
+      "api-key": apiKey,
+      "content-type": "application/json"
+    },
+    timeout: 20
+  });
+  if (response.statusCode !== 201) {
+    throw new Error("Brevo transactional email failed with status " + response.statusCode);
+  }
+  return true;
+}
+
+onMailerSend((e) => {
+  if (!ntmySendWithBrevo(e.message)) e.next();
+});
+
+onBootstrap((e) => {
+  e.next();
+  var smtpHost = $os.getenv("SMTP_HOST");
+  var smtpPort = Number($os.getenv("SMTP_PORT") || "587");
+  var smtpUsername = $os.getenv("SMTP_USERNAME");
+  var smtpPassword = $os.getenv("SMTP_PASSWORD");
+  var senderAddress = $os.getenv("MAIL_SENDER_ADDRESS");
+  var brevoApiKey = $os.getenv("BREVO_API_KEY");
+  if ((smtpHost || brevoApiKey) && !senderAddress) {
+    throw new Error("Incomplete mail sender configuration");
+  }
+  if (smtpHost && (!smtpUsername || !smtpPassword || !Number.isFinite(smtpPort))) {
+    throw new Error("Incomplete SMTP configuration");
+  }
+  var settings = e.app.settings();
+  settings.meta.appName = "NiceToMeetU";
+  settings.meta.senderName = $os.getenv("MAIL_SENDER_NAME") || "NiceToMeetU";
+  if (senderAddress) settings.meta.senderAddress = senderAddress;
+  if (smtpHost) {
+    settings.smtp.enabled = true;
+    settings.smtp.host = smtpHost;
+    settings.smtp.port = smtpPort;
+    settings.smtp.username = smtpUsername;
+    settings.smtp.password = smtpPassword;
+    settings.smtp.tls = String($os.getenv("SMTP_TLS") || "false").toLowerCase() === "true";
+    settings.smtp.authMethod = $os.getenv("SMTP_AUTH_METHOD") || "PLAIN";
+  }
+  e.app.save(settings);
+});
+
 routerAdd("POST", "/api/ntmy/auth/register", (e) => {
   var ntmy = require(__hooks + "/ntmy.js");
   Object.keys(ntmy).forEach(function (key) { globalThis[key] = ntmy[key]; });
@@ -39,6 +117,67 @@ routerAdd("POST", "/api/ntmy/auth/register", (e) => {
   });
   return e.json(201, { created: true });
 });
+
+routerAdd("POST", "/api/ntmy/auth/login", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var data = ntmy.parseRequestBody(e, { email: "", password: "" });
+  var email = ntmy.requiredText(data.email, "email", 254).toLowerCase();
+  var password = String(data.password || "");
+  var user;
+  try {
+    user = e.app.findAuthRecordByEmail("users", email);
+  } catch (_) {
+    throw new BadRequestError("Invalid email or password");
+  }
+  if (!user.validatePassword(password)) throw new BadRequestError("Invalid email or password");
+  if (!user.verified()) throw new ApiError(403, "Email verification required");
+  return $apis.recordAuthResponse(e, user, "password");
+}, $apis.requireGuestOnly());
+
+routerAdd("POST", "/api/ntmy/auth/request-verification", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var data = ntmy.parseRequestBody(e, { email: "" });
+  var email = ntmy.requiredText(data.email, "email", 254).toLowerCase();
+  var user;
+  try {
+    user = e.app.findAuthRecordByEmail("users", email);
+  } catch (_) {
+    return e.json(200, { accepted: true });
+  }
+  if (user.verified()) return e.json(200, { accepted: true });
+  var settings = e.app.settings();
+  var token = user.newVerificationToken();
+  var actionUrl = String(settings.meta.appURL || "").replace(/\/+$/, "") + "/verify-email#token=" + token;
+  var message = new MailerMessage({
+    from: { address: settings.meta.senderAddress, name: settings.meta.senderName },
+    to: [{ address: user.email() }],
+    subject: "Confirm your NiceToMeetU email",
+    html: "<p>Hello,</p><p>Confirm your email address to activate your NiceToMeetU account and start practising with international language groups.</p><p><a href=\"" + actionUrl + "\" target=\"_blank\" rel=\"noopener\">Confirm my email</a></p><p>If you did not create this account, you can ignore this email.</p>"
+  });
+  e.app.newMailClient().send(message);
+  return e.json(200, { accepted: true });
+}, $apis.requireGuestOnly());
+
+routerAdd("POST", "/api/ntmy/auth/confirm-verification", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var data = ntmy.parseRequestBody(e, { token: "" });
+  var token = ntmy.requiredText(data.token, "verification token", 2000);
+  var tokenUser;
+  try {
+    tokenUser = e.app.findAuthRecordByToken(token, "verification");
+  } catch (_) {
+    throw new BadRequestError("Invalid or expired verification token");
+  }
+  $app.runInTransaction((txApp) => {
+    var user = txApp.findRecordById("users", tokenUser.id);
+    if (user.verified()) throw new BadRequestError("Invalid or expired verification token");
+    user.setVerified(true);
+    user.refreshTokenKey();
+    txApp.save(user);
+    ntmy.audit(txApp, user.id, "account_email_verified", "user", user.id, {});
+  });
+  return e.json(200, { verified: true });
+}, $apis.requireGuestOnly());
 
 routerAdd("GET", "/api/ntmy/me", (e) => {
   var ntmy = require(__hooks + "/ntmy.js");

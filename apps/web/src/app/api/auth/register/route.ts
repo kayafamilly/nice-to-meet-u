@@ -1,10 +1,9 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { createSession } from "@/lib/auth/session";
 import { apiError, noStoreJson } from "@/lib/http";
 import { assertCsrf, assertTrustedOrigin } from "@/lib/security/request";
 import { assertRateLimit } from "@/lib/security/rate-limit";
-import { pocketBaseForSession } from "@/lib/pocketbase/server";
+import { callGuestBusinessRoute } from "@/lib/pocketbase/server";
 
 const inputSchema = z.object({
   displayName: z.string().trim().min(2).max(40),
@@ -19,20 +18,30 @@ export async function POST(request: NextRequest) {
     assertCsrf(request);
     assertRateLimit(request, "auth-register", 4, 60 * 60 * 1000);
     const input = inputSchema.parse(await request.json());
-    const pb = pocketBaseForSession();
-    await pb.send("/api/ntmy/auth/register", {
+    const email = input.email.toLowerCase();
+    await callGuestBusinessRoute<{ created: true }>("/api/ntmy/auth/register", {
       method: "POST",
-      body: {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         displayName: input.displayName,
-        email: input.email,
+        email,
         password: input.password,
         passwordConfirm: input.password,
         isAdultConfirmed: input.isAdultConfirmed
-      }
+      })
     });
-    const auth = await pb.collection("users").authWithPassword(input.email, input.password);
-    await createSession({ userId: auth.record.id, pocketBaseToken: auth.token });
-    return noStoreJson({ created: true, authenticated: true }, 201);
+    let emailSent = true;
+    try {
+      await callGuestBusinessRoute<{ accepted: true }>("/api/ntmy/auth/request-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+    } catch {
+      emailSent = false;
+      console.error("PocketBase could not send the registration verification email");
+    }
+    return noStoreJson({ created: true, verificationRequired: true, emailSent }, 201);
   } catch (error) {
     return apiError(error);
   }

@@ -18,6 +18,24 @@ set +a
 : "${DEPLOYMENT:?DEPLOYMENT is required}"
 : "${NEXT_PUBLIC_APP_URL:?NEXT_PUBLIC_APP_URL is required}"
 : "${NEXT_PUBLIC_LIVEKIT_WS_URL:?NEXT_PUBLIC_LIVEKIT_WS_URL is required}"
+: "${MAIL_SENDER_ADDRESS:?MAIL_SENDER_ADDRESS is required}"
+: "${MAIL_SENDER_NAME:?MAIL_SENDER_NAME is required}"
+
+if [ -z "${BREVO_API_KEY:-}" ]; then
+  : "${SMTP_HOST:?BREVO_API_KEY or SMTP_HOST is required}"
+  : "${SMTP_PORT:?SMTP_PORT is required when SMTP is used}"
+  : "${SMTP_USERNAME:?SMTP_USERNAME is required when SMTP is used}"
+  : "${SMTP_PASSWORD:?SMTP_PASSWORD is required when SMTP is used}"
+  : "${SMTP_TLS:?SMTP_TLS is required when SMTP is used}"
+  : "${SMTP_AUTH_METHOD:?SMTP_AUTH_METHOD is required when SMTP is used}"
+  case "$SMTP_PORT" in
+    *[!0-9]*|'') echo "SMTP_PORT must be numeric" >&2; exit 64 ;;
+  esac
+  case "$SMTP_TLS" in
+    true|false) ;;
+    *) echo "SMTP_TLS must be true or false" >&2; exit 64 ;;
+  esac
+fi
 
 "$repo_root/scripts/install-native-linux.sh"
 pnpm --dir "$repo_root" install --frozen-lockfile

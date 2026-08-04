@@ -26,6 +26,8 @@ export function apiError(error: unknown): NextResponse {
     let message = "";
     try { message = String((JSON.parse(error.safeBody) as { message?: string }).message ?? ""); } catch {}
     const code =
+      message.includes("Email verification required") ? "EMAIL_VERIFICATION_REQUIRED" :
+      message.includes("Invalid email or password") ? "INVALID_CREDENTIALS" :
       message.includes("overlaps") ? "SCHEDULE_CONFLICT" :
       message.includes("three upcoming") ? "RESERVATION_LIMIT" :
       message.includes("temporarily suspended") ? "SUSPENDED" :

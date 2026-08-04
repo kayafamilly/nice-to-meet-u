@@ -11,6 +11,7 @@ test-results/
 # Secrets and runtime data
 .env
 .env.*
+env.txt
 !.env.example
 !*.env.example
 !.env.*.example

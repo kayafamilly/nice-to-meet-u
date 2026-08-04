@@ -16,6 +16,7 @@ const liveKitApiKey = process.env.LIVEKIT_API_KEY ?? "devkey";
 const liveKitApiSecret = process.env.LIVEKIT_API_SECRET ?? "local-dev-livekit-secret-0123456789abcdef";
 const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 const password = "realtime-password-123";
+let adminToken = "";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -46,6 +47,13 @@ async function createMember(label, nativeLanguageId, practiceLanguageId) {
       isAdultConfirmed: true
     })
   });
+  const search = new URLSearchParams({ filter: `email = "${email}"`, perPage: "1" });
+  const users = await pbRequest(`/api/collections/users/records?${search}`, { method: "GET" }, adminToken);
+  assert(users.items[0], `The realtime test user ${email} was not created`);
+  await pbRequest(`/api/collections/users/records/${users.items[0].id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ verified: true })
+  }, adminToken);
   const auth = await pbRequest("/api/collections/users/auth-with-password", {
     method: "POST",
     body: JSON.stringify({ identity: email, password })
@@ -85,6 +93,7 @@ async function main() {
     method: "POST",
     body: JSON.stringify({ identity: adminEmail, password: adminPassword })
   });
+  adminToken = admin.token;
   const languagePage = await pbRequest("/api/collections/languages/records?perPage=500&filter=is_active%3Dtrue", { method: "GET" }, admin.token);
   const english = languagePage.items.find((language) => language.code === "en");
   const french = languagePage.items.find((language) => language.code === "fr");

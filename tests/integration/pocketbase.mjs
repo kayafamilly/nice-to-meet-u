@@ -11,6 +11,7 @@ const baseUrl = process.env.POCKETBASE_BASE_URL ?? "http://127.0.0.1:8090";
 const nextWebhookBaseUrl = process.env.NEXT_WEBHOOK_BASE_URL;
 const suffix = `${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
 const password = "integration-password-123";
+let adminToken = "";
 
 function sessionStart(hoursFromNow) {
   const value = new Date(Date.now() + hoursFromNow * 60 * 60 * 1000);
@@ -52,6 +53,17 @@ async function listRecords(collection, query, token) {
   return expectStatus(`/api/collections/${collection}/records?${search}`, 200, { method: "GET" }, token);
 }
 
+async function verifyUser(email) {
+  assert(adminToken, "PocketBase superuser authentication is required to verify test users");
+  const page = await listRecords("users", { filter: `email = "${email}"`, perPage: "1" }, adminToken);
+  const user = page.items[0];
+  assert(user, `The test user ${email} was not created`);
+  await expectStatus(`/api/collections/users/records/${user.id}`, 200, {
+    method: "PATCH",
+    body: JSON.stringify({ verified: true })
+  }, adminToken);
+}
+
 async function createUser(label, nativeLanguageId, targetLanguageId) {
   const email = `${label}-${suffix}@example.test`;
   await expectStatus("/api/ntmy/auth/register", 201, {
@@ -64,6 +76,7 @@ async function createUser(label, nativeLanguageId, targetLanguageId) {
       isAdultConfirmed: true
     })
   });
+  await verifyUser(email);
 
   const auth = await expectStatus("/api/collections/users/auth-with-password", 200, {
     method: "POST",
@@ -183,26 +196,41 @@ async function createBffClient() {
 }
 
 async function main() {
+  const adminEmail = process.env.POCKETBASE_SUPERUSER_EMAIL;
+  const adminPassword = process.env.POCKETBASE_SUPERUSER_PASSWORD;
+  assert(adminEmail && adminPassword, "Integration checks require PocketBase superuser credentials");
+  const adminAuth = await expectStatus("/api/collections/_superusers/auth-with-password", 200, {
+    method: "POST",
+    body: JSON.stringify({ identity: adminEmail, password: adminPassword })
+  });
+  adminToken = adminAuth.token;
+
   await expectStatus("/api/health", 200);
   await expectLiveKitHealthThroughBff();
   await expectNotificationDispatchThroughBff();
   await expectLiveKitLifecycleThroughBff();
 
+  const bootstrapEmail = `bootstrap-${suffix}@example.test`;
   const bootstrap = await expectStatus("/api/ntmy/auth/register", 201, {
     method: "POST",
     body: JSON.stringify({
       displayName: "Integration bootstrap",
-      email: `bootstrap-${suffix}@example.test`,
+      email: bootstrapEmail,
       password,
       passwordConfirm: password,
       isAdultConfirmed: true
     })
   });
   assert(bootstrap?.created === true, "Registration route did not return its DTO");
+  await expectStatus("/api/collections/users/auth-with-password", 403, {
+    method: "POST",
+    body: JSON.stringify({ identity: bootstrapEmail, password })
+  });
+  await verifyUser(bootstrapEmail);
 
   const bootstrapAuth = await expectStatus("/api/collections/users/auth-with-password", 200, {
     method: "POST",
-    body: JSON.stringify({ identity: `bootstrap-${suffix}@example.test`, password })
+    body: JSON.stringify({ identity: bootstrapEmail, password })
   });
   const languages = await expectStatus("/api/ntmy/languages", 200, { method: "GET" }, bootstrapAuth.token);
   const english = languages.find((language) => language.code === "en");
@@ -222,7 +250,14 @@ async function main() {
   const bff = await createBffClient();
   const bffEmail = `bff-${suffix}@example.test`;
   const bffRegister = await bff.requestBff("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": bff.csrf() }, body: JSON.stringify({ displayName: "BFF contract", email: bffEmail, password, isAdultConfirmed: true }) });
-  assert(bffRegister.status === 201, `BFF registration failed: ${JSON.stringify(bffRegister.body)}`);
+  assert(bffRegister.status === 201 && bffRegister.body?.verificationRequired === true && typeof bffRegister.body?.emailSent === "boolean", `BFF registration must require email verification: ${JSON.stringify(bffRegister.body)}`);
+  const bffSessionBeforeVerification = await bff.requestBff("/api/auth/session");
+  assert(bffSessionBeforeVerification.status === 401, "BFF registration must not create a browser session before email verification");
+  const bffUnverifiedLogin = await bff.requestBff("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": bff.csrf() }, body: JSON.stringify({ email: bffEmail, password }) });
+  assert(bffUnverifiedLogin.status === 403 && bffUnverifiedLogin.body?.error === "EMAIL_VERIFICATION_REQUIRED", `Unverified BFF login returned an unexpected response: ${JSON.stringify(bffUnverifiedLogin.body)}`);
+  await verifyUser(bffEmail);
+  const bffLogin = await bff.requestBff("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": bff.csrf() }, body: JSON.stringify({ email: bffEmail, password }) });
+  assert(bffLogin.status === 200 && bffLogin.body?.authenticated === true, `Verified BFF login failed: ${JSON.stringify(bffLogin.body)}`);
   const bffOnboarding = await bff.requestBff("/api/app/onboarding", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": bff.csrf() }, body: JSON.stringify({ nativeLanguageIds: [english.id], practiceLanguages: [{ languageId: french.id, level: "beginner" }, { languageId: italian.id, level: "advanced" }], timeZone: "Europe/Paris", communityRulesAccepted: true }) });
   assert(bffOnboarding.status === 200, `BFF onboarding failed: ${JSON.stringify(bffOnboarding.body)}`);
   const invalidSlot = new Date(Date.now() + 3 * 60 * 60 * 1000);
@@ -356,14 +391,6 @@ async function main() {
   const openAccessCandidate = await createUser("open-access-candidate", french.id, english.id);
   await expectStatus(`/api/ntmy/sessions/${lockSessionOne.id}/reserve`, 200, { method: "POST" }, openAccessCandidate);
   await expectStatus(`/api/ntmy/sessions/${lockSessionTwo.id}/reserve`, 200, { method: "POST" }, openAccessCandidate);
-
-  const adminEmail = process.env.POCKETBASE_SUPERUSER_EMAIL;
-  const adminPassword = process.env.POCKETBASE_SUPERUSER_PASSWORD;
-  assert(adminEmail && adminPassword, "Integration webhook checks require CI-only superuser credentials");
-  const adminAuth = await expectStatus("/api/collections/_superusers/auth-with-password", 200, {
-    method: "POST",
-    body: JSON.stringify({ identity: adminEmail, password: adminPassword })
-  });
 
   const overlapCandidate = await createUser("overlap-candidate", english.id, french.id);
   const overlappingOne = await expectStatus("/api/ntmy/sessions", 201, {
