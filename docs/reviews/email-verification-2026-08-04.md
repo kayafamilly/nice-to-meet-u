@@ -33,7 +33,10 @@
 - PocketBase integration suite — passed, including no session after registration, unverified login refusal, administrative test verification and verified BFF login.
 - Custom confirmation route — passed with a locally generated PocketBase verification token; subsequent custom login returned `200`.
 - Browser smoke test — passed: registration redirects to `/verify-email`, the address is prefilled, an unverified login returns to that page, and no browser console errors were observed.
+- Brevo MCP transport — passed through the authorised production VPS; initialization returned `MainBrevoMCPServer 2.14.7`.
+- Brevo transactional transport — passed: `noreply@nice-to-meet-u.com` produced a `201` response for a single owner-address connection test.
+- Production deployment — passed on commit `8d37b0c`; the email-verification migration is recorded, the users auth rule is `verified = true`, public verification and registration pages return `200`, and PocketBase/LiveKit health checks return `200`.
 
 ## Production activation gate
 
-Production activation requires a verified Brevo sender/domain and the corresponding SPF/DKIM records. The standard Brevo API key and the Codex MCP token are intentionally separate credentials.
+Production delivery is active through Brevo. The credential remains server-only in `/etc/nicetomeetu/production.env`; the MCP wrapper and token are root-readable only on the VPS. Brevo's local-IP restriction remains enabled, so Codex administration is tunneled through the authorised VPS instead of weakening the account allow-list.
