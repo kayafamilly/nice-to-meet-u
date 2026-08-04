@@ -1,0 +1,29 @@
+{
+  email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3000
+}
+
+{$WWW_APP_DOMAIN} {
+  redir https://{$APP_DOMAIN}{uri} permanent
+}
+
+{$STAGING_APP_DOMAIN} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3001
+}
+
+{$LIVEKIT_DOMAIN} {
+  reverse_proxy 127.0.0.1:7880 {
+    flush_interval -1
+  }
+}
+
+{$STAGING_LIVEKIT_DOMAIN} {
+  reverse_proxy 127.0.0.1:7882 {
+    flush_interval -1
+  }
+}

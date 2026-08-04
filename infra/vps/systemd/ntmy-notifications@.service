@@ -1,0 +1,20 @@
+[Unit]
+Description=NiceToMeetU notification worker (%i)
+After=network-online.target ntmy-web@%i.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ntmy
+Group=ntmy
+WorkingDirectory=/opt/nicetomeetu
+EnvironmentFile=/etc/nicetomeetu/%i.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /opt/nicetomeetu/scripts/notification-worker.mjs
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

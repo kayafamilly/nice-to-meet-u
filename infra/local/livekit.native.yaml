@@ -1,0 +1,22 @@
+port: 7880
+bind_addresses:
+  - 127.0.0.1
+rtc:
+  # Windows can otherwise select a link-local 169.254.x.x adapter, which is
+  # unreachable from the local browser during ICE negotiation.
+  enable_loopback_candidate: true
+  ips:
+    excludes:
+      - 169.254.0.0/16
+      - fe80::/10
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50049
+keys:
+  devkey: local-dev-livekit-secret-0123456789abcdef
+webhook:
+  api_key: devkey
+  urls:
+    - http://127.0.0.1:3000/api/livekit/webhook
+logging:
+  level: info

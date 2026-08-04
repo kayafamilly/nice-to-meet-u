@@ -1,0 +1,21 @@
+[Unit]
+Description=NiceToMeetU PocketBase (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ntmy
+Group=ntmy
+WorkingDirectory=/opt/nicetomeetu
+EnvironmentFile=/etc/nicetomeetu/%i.env
+ExecStart=/opt/nicetomeetu/.local/bin/pocketbase/pocketbase serve --http=127.0.0.1:${POCKETBASE_PORT} --dir=/var/lib/nicetomeetu/%i/pocketbase --migrationsDir=/opt/nicetomeetu/services/pocketbase/pb_migrations --hooksDir=/opt/nicetomeetu/services/pocketbase/pb_hooks --automigrate=false
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/nicetomeetu/%i/pocketbase
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,38 @@
+{
+  "name": "nice-to-meet-u",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=20.19.0 <23",
+    "pnpm": ">=9.15.4 <10"
+  },
+  "pnpm": {
+    "overrides": {
+      "brace-expansion": "5.0.9",
+      "postcss": "8.5.23",
+      "sharp": "0.35.3"
+    },
+    "patchedDependencies": {
+      "brace-expansion@5.0.9": "patches/brace-expansion@5.0.9.patch"
+    }
+  },
+  "scripts": {
+    "dev": "pnpm --filter @ntmy/web dev",
+    "build": "pnpm --filter @ntmy/web build",
+    "lint": "pnpm --filter @ntmy/web lint",
+    "typecheck": "pnpm --filter @ntmy/web typecheck",
+    "test": "pnpm --filter @ntmy/web test",
+    "test:e2e": "pnpm --filter @ntmy/web test:e2e",
+    "test:integration": "node ./tests/integration/pocketbase.mjs",
+    "test:realtime": "node ./tests/realtime/session-room.mjs",
+    "test:load": "pwsh ./tests/load/run-load-test.ps1",
+    "local:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/local.ps1 setup",
+    "local:start": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/local.ps1 start",
+    "local:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/local.ps1 stop",
+    "local:status": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/local.ps1 status",
+    "worker:notifications": "node --env-file=apps/web/.env.local ./scripts/notification-worker.mjs",
+    "worker:livekit-lifecycle": "node --env-file=apps/web/.env.local ./scripts/livekit-lifecycle-worker.mjs",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
+  }
+}

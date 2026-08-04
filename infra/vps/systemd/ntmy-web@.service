@@ -1,0 +1,21 @@
+[Unit]
+Description=NiceToMeetU Next.js BFF (%i)
+After=network-online.target ntmy-pocketbase@%i.service ntmy-livekit@%i.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ntmy
+Group=ntmy
+WorkingDirectory=/opt/nicetomeetu
+EnvironmentFile=/etc/nicetomeetu/%i.env
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+ExecStart=/usr/bin/env PORT=${APP_PORT} /usr/bin/node /opt/nicetomeetu/apps/web/.next/standalone/apps/web/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.14.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+  e2e-smoke:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.14.0, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ntmy/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @ntmy/web test:e2e
+
+  pocketbase-integration:
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22.14.0, cache: pnpm }
+      - run: sudo apt-get update && sudo apt-get install -y unzip
+      - run: pnpm install --frozen-lockfile
+      - run: chmod +x scripts/install-native-linux.sh && ./scripts/install-native-linux.sh
+      - name: Start native PocketBase, LiveKit and Next.js
+        run: |
+          export POCKETBASE_INTERNAL_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+          export NOTIFICATION_WORKER_SECRET="$(openssl rand -hex 32)"
+          export LIVEKIT_LIFECYCLE_WORKER_SECRET="$(openssl rand -hex 32)"
+          export SESSION_ENCRYPTION_SECRET="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+          export NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
+          export NEXT_PUBLIC_LIVEKIT_WS_URL=ws://127.0.0.1:7880
+          export POCKETBASE_INTERNAL_URL=http://127.0.0.1:8090
+          export LIVEKIT_HTTP_URL=http://127.0.0.1:7880
+          export LIVEKIT_API_KEY=devkey
+          export LIVEKIT_API_SECRET=local-dev-livekit-secret-0123456789abcdef
+          export VAPID_SUBJECT=mailto:ci@example.test
+          export VAPID_PUBLIC_KEY=BOeeYHekbUGsIhHcsyIZic2023NJ6exEt1NF60ZCy6TWKnARAU49lNaxSOvyfd675EZqtd1UandD39MdbUlOjEs
+          export VAPID_PRIVATE_KEY=c01PbCUJTpE0ianpAb1w2hCtbMCeYfjc88wDLrytUfU
+          env | grep -E '^(POCKETBASE_INTERNAL_WEBHOOK_SECRET|NOTIFICATION_WORKER_SECRET|LIVEKIT_LIFECYCLE_WORKER_SECRET|SESSION_ENCRYPTION_SECRET|NEXT_PUBLIC_APP_URL|NEXT_PUBLIC_LIVEKIT_WS_URL|POCKETBASE_INTERNAL_URL|LIVEKIT_HTTP_URL|LIVEKIT_API_KEY|LIVEKIT_API_SECRET|VAPID_)=' >> "$GITHUB_ENV"
+          mkdir -p .local/pocketbase/pb_data
+          migration_output="$(./.local/bin/pocketbase/pocketbase migrate up --dir="$PWD/.local/pocketbase/pb_data" --migrationsDir="$PWD/services/pocketbase/pb_migrations" --automigrate=false 2>&1)"
+          printf '%s\n' "$migration_output"
+          if grep -q 'Error:' <<<"$migration_output"; then
+            echo "PocketBase migrations failed" >&2
+            exit 1
+          fi
+          ./.local/bin/pocketbase/pocketbase serve --dev --http=127.0.0.1:8090 --dir="$PWD/.local/pocketbase/pb_data" --migrationsDir="$PWD/services/pocketbase/pb_migrations" --hooksDir="$PWD/services/pocketbase/pb_hooks" --automigrate=false > "$RUNNER_TEMP/pocketbase.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/pocketbase.pid"
+          ./.local/bin/livekit/livekit-server --config "$PWD/infra/local/livekit.native.yaml" > "$RUNNER_TEMP/livekit.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/livekit.pid"
+          until curl --fail --silent --show-error http://127.0.0.1:8090/api/health; do sleep 2; done
+          ./.local/bin/pocketbase/pocketbase superuser create integration-admin@example.test integration-admin-password-123 --dir="$PWD/.local/pocketbase/pb_data"
+          echo "POCKETBASE_SUPERUSER_EMAIL=integration-admin@example.test" >> "$GITHUB_ENV"
+          echo "POCKETBASE_SUPERUSER_PASSWORD=integration-admin-password-123" >> "$GITHUB_ENV"
+          pnpm --filter @ntmy/web build
+          pnpm --filter @ntmy/web start --hostname 127.0.0.1 --port 3000 > "$RUNNER_TEMP/ntmy-next.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/ntmy-next.pid"
+          until curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3000/; do sleep 2; done
+          node scripts/livekit-lifecycle-worker.mjs > "$RUNNER_TEMP/livekit-lifecycle.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/livekit-lifecycle.pid"
+          echo "NEXT_WEBHOOK_BASE_URL=http://127.0.0.1:3000" >> "$GITHUB_ENV"
+      - run: pnpm test:integration
+      - run: pnpm --filter @ntmy/web exec playwright install --with-deps chromium
+      - run: pnpm test:realtime
+      - if: always()
+        run: |
+          for service in livekit-lifecycle ntmy-next livekit pocketbase; do
+            if [ -f "$RUNNER_TEMP/$service.pid" ]; then kill "$(cat "$RUNNER_TEMP/$service.pid")" || true; fi
+          done

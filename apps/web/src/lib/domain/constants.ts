@@ -1,0 +1,9 @@
+export const SESSION_DURATION_MINUTES = 30;
+export const JOIN_OPEN_MINUTES_BEFORE = 10;
+export const JOIN_CLOSE_MINUTES_AFTER = 5;
+export const MIN_VALID_ATTENDANCE_SECONDS = 20 * 60;
+export const MAX_PARTICIPANTS = 4;
+export const MIN_PARTICIPANTS = 2;
+export const NO_SHOW_WINDOW_DAYS = 30;
+export const NO_SHOW_SUSPENSION_THRESHOLD = 3;
+export const NO_SHOW_SUSPENSION_DAYS = 7;

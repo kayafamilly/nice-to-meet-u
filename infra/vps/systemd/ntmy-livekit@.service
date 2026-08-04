@@ -1,0 +1,19 @@
+[Unit]
+Description=NiceToMeetU LiveKit (%i)
+After=network-online.target ntmy-redis@%i.service ntmy-pocketbase@%i.service
+Wants=network-online.target ntmy-redis@%i.service
+
+[Service]
+Type=simple
+User=ntmy
+Group=ntmy
+WorkingDirectory=/opt/nicetomeetu
+EnvironmentFile=/etc/nicetomeetu/%i.env
+ExecStart=/opt/nicetomeetu/.local/bin/livekit/livekit-server --config /opt/nicetomeetu/infra/vps/rendered/%i/livekit.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
