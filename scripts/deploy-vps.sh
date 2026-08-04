@@ -39,8 +39,12 @@ sudo install -m 640 -o root -g ntmy "$env_file" "/etc/nicetomeetu/$DEPLOYMENT.en
 sudo chown root:ntmy "$repo_root/infra/vps/rendered/$DEPLOYMENT/livekit.yaml"
 sudo chmod 640 "$repo_root/infra/vps/rendered/$DEPLOYMENT/livekit.yaml"
 sudo install -m 644 "$repo_root"/infra/vps/systemd/*.service /etc/systemd/system/
+sudo install -m 644 "$repo_root"/infra/vps/systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable "ntmy-pocketbase@$DEPLOYMENT" "ntmy-redis@$DEPLOYMENT" "ntmy-livekit@$DEPLOYMENT" "ntmy-web@$DEPLOYMENT" "ntmy-notifications@$DEPLOYMENT" "ntmy-livekit-lifecycle@$DEPLOYMENT"
+if [ "$DEPLOYMENT" = production ]; then
+  sudo systemctl enable --now ntmy-certbot-renew.timer
+fi
 sudo systemctl stop "ntmy-livekit-lifecycle@$DEPLOYMENT" "ntmy-notifications@$DEPLOYMENT" "ntmy-web@$DEPLOYMENT" "ntmy-livekit@$DEPLOYMENT" "ntmy-redis@$DEPLOYMENT" "ntmy-pocketbase@$DEPLOYMENT" || true
 if ! migration_output=$(sudo -u ntmy "$repo_root/.local/bin/pocketbase/pocketbase" migrate up \
   --dir="/var/lib/nicetomeetu/$DEPLOYMENT/pocketbase" \

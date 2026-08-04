@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule NiceToMeetU TLS certificate renewal
+
+[Timer]
+OnCalendar=*-*-* 02,14:20:00
+RandomizedDelaySec=1h
+Persistent=true
+Unit=ntmy-certbot-renew.service
+
+[Install]
+WantedBy=timers.target
+

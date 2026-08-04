@@ -16,12 +16,14 @@ Create `apps/web/.env.local` from its example before starting. VAPID keys and ev
 
 ## VPS
 
-The VPS runs native `systemd` services for PocketBase, an isolated Redis instance per environment, LiveKit, Next.js, the notification worker and the LiveKit lifecycle worker. Caddy is the system Caddy service and proxies HTTPS to loopback Next.js and LiveKit listeners. Install Redis as the native `redis-server` package; the templated `ntmy-redis@<deployment>` unit binds its configured port to loopback.
+The VPS runs native `systemd` services for PocketBase, an isolated Redis instance per environment, LiveKit, Next.js, the notification worker and the LiveKit lifecycle worker. Nginx proxies HTTPS to loopback Next.js and LiveKit listeners on the shared production VPS. Install Redis as the native `redis-server` package; the templated `ntmy-redis@<deployment>` unit binds its configured port to loopback.
 
-1. Install `nodejs`, `pnpm`, `curl`, `unzip`, `redis-server`, `caddy`, `gettext-base` and UFW. Create an unprivileged `ntmy` system user and check out the release under `/opt/nicetomeetu`.
+1. Install `nodejs`, `pnpm`, `curl`, `unzip`, `redis-server`, `nginx`, `certbot`, `python3-certbot-nginx`, `gettext-base` and UFW. Create an unprivileged `ntmy` system user and check out the release under `/opt/nicetomeetu`.
 2. Copy an environment example to an untracked file, set URLs, independent secrets and VAPID keys, then run `./scripts/deploy-vps.sh path/to/environment.env`. The script stops the application services, applies pending PocketBase migrations as the unprivileged service user, and restarts the full stack only after migration success.
 3. The deployment puts secrets in `/etc/nicetomeetu/<deployment>.env`, stores PocketBase data in `/var/lib/nicetomeetu/<deployment>/pocketbase`, and installs all templated PocketBase, Redis, LiveKit, web, notification and lifecycle units from `infra/vps/systemd/`.
-4. Render/install the Caddyfile with the edge-domain environment, then reload Caddy. Caddy is the only public HTTP(S) process.
+4. Bootstrap the HTTP virtual hosts, issue the certificate for the apex, `www` and `meet` names, then install `infra/vps/nginx.nice-to-meet-u.conf` as the enabled Nginx site. The bundled Caddyfile is an alternative for a dedicated host; never run both edge servers on the same ports.
+
+Production also enables `ntmy-certbot-renew.timer`, which renews only the `nice-to-meet-u.com` certificate so unrelated certificates on a shared VPS cannot block its renewal.
 
 PocketBase, Redis, Next.js and LiveKit HTTP signaling ports stay private. Allow only SSH, 80/TCP, 443/TCP, required LiveKit TCP ports, TURN UDP, the declared ICE/UDP range and the separate TURN relay range. `scripts/verify-vps-firewall.sh` refuses deployment if a required media rule is missing or a LiveKit HTTP port is exposed.
 
