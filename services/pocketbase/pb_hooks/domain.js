@@ -17,6 +17,11 @@ function hasViableGroup(participantCount) {
   return count >= 2 && count <= 4;
 }
 
+function hasMinimumConfirmedAttendance(attendeeCount) {
+  var count = Number(attendeeCount);
+  return Number.isInteger(count) && count >= 2;
+}
+
 function sessionJoinState(input) {
   var status = String(input.status || "");
   var participantCount = Number(input.participantCount);
@@ -97,6 +102,7 @@ function isProcessingLeaseExpired(updatedAt, now, leaseSeconds) {
 module.exports = {
   hasValidatedAttendance: hasValidatedAttendance,
   hasValidatedAttendanceFromEvents: hasValidatedAttendanceFromEvents,
+  hasMinimumConfirmedAttendance: hasMinimumConfirmedAttendance,
   hasViableGroup: hasViableGroup,
   isSessionClosureDue: isSessionClosureDue,
   isProcessingLeaseExpired: isProcessingLeaseExpired,

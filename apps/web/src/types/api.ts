@@ -95,3 +95,16 @@ export type AppNotification = {
 };
 
 export type NotificationCentre = { notifications: AppNotification[]; unreadCount: number };
+
+export type CommunityMetrics = {
+  verifiedCompletedSessionCount: number;
+};
+
+export type ManagementParticipant = { id: string; userId: string; displayName: string; role: ParticipantType; reservationStatus: ReservationStatus; joinedAt: string | null; leftAt: string | null; absenceReason: string | null };
+export type ManagementSessionDetail = { id: string; languageName: string; hostId: string; hostName: string; startsAt: string; endsAt: string; note: string; status: "scheduled" | "completed" | "cancelled"; participantCount: number; participants: ManagementParticipant[]; createdAt: string | null };
+export type ManagementUserDetail = { id: string; email: string; displayName: string; verified: boolean; createdAt: string; status: string; onboardingComplete: boolean; timeZone: string; suspendedUntil: string | null; languages: Array<{ name: string; level: string; native: boolean }>; sessionStats: { total: number; attended: number; noShow: number; cancelled: number }; sessions?: ManagementSessionDetail[] };
+export type ManagementOverview = { visits: number; pageViews: number; users: number; verifiedUsers: number; onboardedUsers: number; sessions: number; scheduledSessions: number; completedSessions: number; cancelledSessions: number; attendedReservations: number; noShows: number; openReports: number; recentSessions: ManagementSessionDetail[] };
+export type ManagementAnalyticsReport = { days: number; from: string; to: string; daily: Array<{ day: string; visitors: number; visits: number; pageViews: number }>; totals: { visitors: number; visits: number; pageViews: number; registrations: number; verifiedAccounts: number }; pages: Array<{ label: string; value: number }>; sources: Array<{ label: string; value: number }>; devices: Array<{ label: string; value: number }>; conversion: { registrationRate: number; verificationRate: number } };
+export type ManagementModerationReport = { id: string; reporterId: string; reporterName: string; reportedUserId: string | null; reportedUserName: string | null; sessionId: string | null; reason: string; details: string; status: string; createdAt: string };
+export type ManagementSystemStatus = { pocketBase: "healthy" | "unavailable"; liveKit: "healthy" | "unavailable"; web: "healthy"; notificationWorker: "active" | "attention" | "unavailable"; liveKitWorker: "active" | "attention" | "unavailable"; failedNotifications: number; failedWebhooks: number; lastWebhookAt: string | null; notificationWorkerLastSeenAt: string | null; liveKitWorkerLastSeenAt: string | null };
+export type ManagementPage<T> = { items: T[]; page: number; perPage: number; totalItems: number; totalPages: number };

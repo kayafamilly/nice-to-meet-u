@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PublicFooter } from "@/components/public-footer";
 import { SiteHeader } from "@/components/site-header";
 
 const description = "See how NiceToMeetU connects two to four international people for focused 30-minute video sessions in the language they want to practise.";
@@ -34,6 +35,7 @@ export default function HowItWorksPage() {
           <article className="card stack"><span className="step-number">4</span><h2>Keep your language alive</h2><p>No lesson, homework or teacher. Just a useful social moment with international people that helps vocabulary return, fluency grow and speaking feel natural.</p></article>
         </div>
       </section>
+      <PublicFooter />
     </main>
   );
 }

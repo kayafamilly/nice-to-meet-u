@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { RoomServiceClient, ServerError } from "livekit-server-sdk";
 import { getServerEnv } from "@/lib/env";
 import { noStoreJson, unauthorized } from "@/lib/http";
+import { managementInternal } from "@/lib/management/data";
 
 function isLifecycleWorkerRequest(request: NextRequest): boolean {
   const expected = `Bearer ${getServerEnv().LIVEKIT_LIFECYCLE_WORKER_SECRET}`;
@@ -44,6 +45,7 @@ export async function POST(request: NextRequest) {
   const results = await Promise.allSettled(expiredRooms.map((room) => deleteRoomIdempotently(roomService, room.name)));
   const failed = results.filter((result) => result.status === "rejected").length;
   if (failed) console.error("Unable to close every expired LiveKit room", { attempted: expiredRooms.length, failed });
+  if (!failed) await managementInternal("/api/ntmy/internal/management/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "livekit_worker" }) });
   return noStoreJson({
     checked: rooms.length,
     closed: expiredRooms.length - failed,

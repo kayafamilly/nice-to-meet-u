@@ -3,6 +3,7 @@ import webpush from "web-push";
 import { getServerEnv } from "@/lib/env";
 import { noStoreJson, unauthorized } from "@/lib/http";
 import { callInternalBusinessRoute } from "@/lib/pocketbase/server";
+import { managementInternal } from "@/lib/management/data";
 
 type ClaimedNotification = {
   id: string;
@@ -45,5 +46,6 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  await managementInternal("/api/ntmy/internal/management/heartbeat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ service: "notification_worker" }) });
   return noStoreJson({ claimed: claim.notifications.length, delivered, retried });
 }

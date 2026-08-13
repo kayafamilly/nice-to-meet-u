@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
 import { headers } from "next/headers";
 import { DM_Serif_Display, Manrope } from "next/font/google";
 import "@livekit/components-styles";
 import "@/app/globals.css";
 import { SITE_DESCRIPTION, SITE_NAME, siteUrl, websiteStructuredData } from "@/lib/seo";
+import { AnalyticsTracker } from "@/components/analytics-tracker";
 
 const manrope = Manrope({ subsets: ["latin"], variable: "--font-sans" });
 const editorial = DM_Serif_Display({ weight: "400", subsets: ["latin"], variable: "--font-editorial" });
@@ -58,7 +59,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <head>
         <script nonce={nonce} type="application/ld+json" dangerouslySetInnerHTML={{ __html: structuredData }} />
       </head>
-      <body nonce={nonce}>{children}</body>
+      <body nonce={nonce}>{children}<Suspense fallback={null}><AnalyticsTracker /></Suspense></body>
     </html>
   );
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import domain from "./domain.js";
 
-const { hasValidatedAttendance, hasValidatedAttendanceFromEvents, hasViableGroup, isProcessingLeaseExpired, isSessionClosureDue, rangesOverlap, roomNameFor, sessionJoinState } = domain;
+const { hasValidatedAttendance, hasValidatedAttendanceFromEvents, hasMinimumConfirmedAttendance, hasViableGroup, isProcessingLeaseExpired, isSessionClosureDue, rangesOverlap, roomNameFor, sessionJoinState } = domain;
 
 const session = {
   startsAt: "2030-01-01T10:00:00.000Z",
@@ -62,6 +62,14 @@ describe("PocketBase session domain rules", () => {
     expect(hasViableGroup(3)).toBe(true);
     expect(hasViableGroup(4)).toBe(true);
     expect(hasViableGroup(5)).toBe(false);
+  });
+
+  it("requires two confirmed attendees for a verified completed session", () => {
+    expect(hasMinimumConfirmedAttendance(0)).toBe(false);
+    expect(hasMinimumConfirmedAttendance(1)).toBe(false);
+    expect(hasMinimumConfirmedAttendance(2)).toBe(true);
+    expect(hasMinimumConfirmedAttendance(4)).toBe(true);
+    expect(hasMinimumConfirmedAttendance(2.5)).toBe(false);
   });
 
   it("separates preparation, live access and the hard media deadline", () => {

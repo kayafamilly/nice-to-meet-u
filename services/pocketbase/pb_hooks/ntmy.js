@@ -1,6 +1,7 @@
 var domain = require(__hooks + "/domain.js");
 var SESSION_CAPACITY = 4, MIN_PARTICIPANTS = 2, MAX_ACTIVE_RESERVATIONS = 3, SESSION_MINUTES = 30;
 var NO_SHOW_LIMIT = 3, NO_SHOW_WINDOW_DAYS = 30, SUSPENSION_DAYS = 7, MIN_VALID_ATTENDANCE_MINUTES = 20, WEBHOOK_PROCESSING_LEASE_SECONDS = 120;
+var VERIFIED_SESSION_METRICS_RECORD_ID = "nmtumetric00001";
 
 function parseRequestBody(e, definition) { var data = new DynamicModel(definition); e.bindBody(data); return data; }
 function requiredText(value, label, max) { var text = String(value || "").trim(); if (!text || (max && text.length > max)) throw new BadRequestError("Invalid " + label); return text; }
@@ -121,6 +122,24 @@ function notificationFor(app, userId, kind, dedupKey, title, body, url, deliverA
   notification.set("delivery_status", "pending"); notification.set("delivery_attempts", 0); notification.set("last_delivery_error", "");
   app.save(notification); return notification;
 }
+function confirmedAttendanceCount(app, sessionId) {
+  return app.findRecordsByFilter(
+    "session_participants",
+    "session = {:session} && reservation_status = 'attended'",
+    "id",
+    MIN_PARTICIPANTS,
+    0,
+    { session: sessionId }
+  ).length;
+}
+function hasMinimumConfirmedAttendance(app, sessionId) {
+  return domain.hasMinimumConfirmedAttendance(confirmedAttendanceCount(app, sessionId));
+}
+function incrementVerifiedCompletedSessionCount(app) {
+  var metrics = app.findRecordById("public_metrics", VERIFIED_SESSION_METRICS_RECORD_ID);
+  metrics.set("verified_completed_session_count", metrics.getInt("verified_completed_session_count") + 1);
+  app.save(metrics);
+}
 function notifySessionFull(app, session) {
   var participants = activeParticipants(app, session.id);
   var count = participants.length;
@@ -172,4 +191,4 @@ function processLiveKitEvent(app, payload, webhookEventId) {
 }
 function isWebhookProcessingLeaseExpired(webhook) { return domain.isProcessingLeaseExpired(webhook.getString("processing_started_at") || webhook.getString("updated"), Date.now(), WEBHOOK_PROCESSING_LEASE_SECONDS); }
 
-module.exports = { domain: domain, SESSION_CAPACITY: SESSION_CAPACITY, MIN_PARTICIPANTS: MIN_PARTICIPANTS, MAX_ACTIVE_RESERVATIONS: MAX_ACTIVE_RESERVATIONS, SESSION_MINUTES: SESSION_MINUTES, MIN_VALID_ATTENDANCE_MINUTES: MIN_VALID_ATTENDANCE_MINUTES, WEBHOOK_PROCESSING_LEASE_SECONDS: WEBHOOK_PROCESSING_LEASE_SECONDS, parseRequestBody: parseRequestBody, requiredText: requiredText, optionalText: optionalText, parseFutureDate: parseFutureDate, dateValue: dateValue, findAllRecordsByFilter: findAllRecordsByFilter, audit: audit, profileFor: profileFor, languageFor: languageFor, roleFor: roleFor, reservationUsage: reservationUsage, activeReservationsFor: activeReservationsFor, assertNoScheduleConflict: assertNoScheduleConflict, activeReservationCount: activeReservationCount, assertReservationLimit: assertReservationLimit, assertActiveProfile: assertActiveProfile, activeParticipants: activeParticipants, assertCapacity: assertCapacity, acquireReservationLock: acquireReservationLock, releaseReservationLock: releaseReservationLock, viewerReservationFor: viewerReservationFor, sessionDto: sessionDto, createParticipant: createParticipant, hasViableSessionGroup: hasViableSessionGroup, languageDto: languageDto, userLanguageFor: userLanguageFor, languageIdsFrom: languageIdsFrom, practiceLanguagesFrom: practiceLanguagesFrom, assertDistinctLanguageProfile: assertDistinctLanguageProfile, languageLinksFor: languageLinksFor, replacePracticeLanguages: replacePracticeLanguages, notificationFor: notificationFor, notifySessionFull: notifySessionFull, cancelScheduledSession: cancelScheduledSession, notificationDto: notificationDto, hasValidatedAttendance: hasValidatedAttendance, suspendForNoShows: suspendForNoShows, recalculateSuspension: recalculateSuspension, internalWebhookOnly: internalWebhookOnly, newWebhookProcessingAttempt: newWebhookProcessingAttempt, processLiveKitEvent: processLiveKitEvent, isWebhookProcessingLeaseExpired: isWebhookProcessingLeaseExpired };
+module.exports = { domain: domain, SESSION_CAPACITY: SESSION_CAPACITY, MIN_PARTICIPANTS: MIN_PARTICIPANTS, MAX_ACTIVE_RESERVATIONS: MAX_ACTIVE_RESERVATIONS, SESSION_MINUTES: SESSION_MINUTES, MIN_VALID_ATTENDANCE_MINUTES: MIN_VALID_ATTENDANCE_MINUTES, WEBHOOK_PROCESSING_LEASE_SECONDS: WEBHOOK_PROCESSING_LEASE_SECONDS, VERIFIED_SESSION_METRICS_RECORD_ID: VERIFIED_SESSION_METRICS_RECORD_ID, parseRequestBody: parseRequestBody, requiredText: requiredText, optionalText: optionalText, parseFutureDate: parseFutureDate, dateValue: dateValue, findAllRecordsByFilter: findAllRecordsByFilter, audit: audit, profileFor: profileFor, languageFor: languageFor, roleFor: roleFor, reservationUsage: reservationUsage, activeReservationsFor: activeReservationsFor, assertNoScheduleConflict: assertNoScheduleConflict, activeReservationCount: activeReservationCount, assertReservationLimit: assertReservationLimit, assertActiveProfile: assertActiveProfile, activeParticipants: activeParticipants, assertCapacity: assertCapacity, acquireReservationLock: acquireReservationLock, releaseReservationLock: releaseReservationLock, viewerReservationFor: viewerReservationFor, sessionDto: sessionDto, createParticipant: createParticipant, hasViableSessionGroup: hasViableSessionGroup, languageDto: languageDto, userLanguageFor: userLanguageFor, languageIdsFrom: languageIdsFrom, practiceLanguagesFrom: practiceLanguagesFrom, assertDistinctLanguageProfile: assertDistinctLanguageProfile, languageLinksFor: languageLinksFor, replacePracticeLanguages: replacePracticeLanguages, notificationFor: notificationFor, notifySessionFull: notifySessionFull, cancelScheduledSession: cancelScheduledSession, notificationDto: notificationDto, confirmedAttendanceCount: confirmedAttendanceCount, hasMinimumConfirmedAttendance: hasMinimumConfirmedAttendance, incrementVerifiedCompletedSessionCount: incrementVerifiedCompletedSessionCount, hasValidatedAttendance: hasValidatedAttendance, suspendForNoShows: suspendForNoShows, recalculateSuspension: recalculateSuspension, internalWebhookOnly: internalWebhookOnly, newWebhookProcessingAttempt: newWebhookProcessingAttempt, processLiveKitEvent: processLiveKitEvent, isWebhookProcessingLeaseExpired: isWebhookProcessingLeaseExpired };

@@ -132,6 +132,63 @@ async function expectLiveKitHealthThroughBff() {
   assert(response.status === 200 && body?.services?.livekit === "ok", `LiveKit health through Next returned ${response.status}: ${JSON.stringify(body)}`);
 }
 
+async function expectPrivateManagementInfrastructure(adminToken) {
+  const internalSecret = process.env.MANAGEMENT_INTERNAL_SECRET;
+  assert(internalSecret, "Management integration checks require MANAGEMENT_INTERNAL_SECRET");
+  for (const collection of ["analytics_visits", "analytics_page_views", "analytics_daily", "management_auth_events", "management_service_heartbeats"]) {
+    const response = await request(`/api/collections/${collection}/records?perPage=1`);
+    assert(response.status === 403, `${collection} must remain unavailable without a superuser token`);
+  }
+  const rejected = await request("/api/ntmy/internal/management/data?section=overview");
+  assert(rejected.status === 403, "Management data accepted a request without its internal secret");
+  const visitorHash = createHash("sha256").update(`visitor-${suffix}`).digest("hex");
+  const eventId = crypto.randomUUID();
+  const headers = { "X-Management-Internal-Secret": internalSecret };
+  const event = { visitorHash, eventId, path: "/", device: "desktop", referrerHost: "", utmSource: "integration", utmMedium: "test", utmCampaign: "management" };
+  const accepted = await request("/api/ntmy/internal/analytics/track", { method: "POST", headers, body: JSON.stringify(event) });
+  assert(accepted.status === 201 && accepted.body?.duplicate === false, `Analytics event was not accepted: ${JSON.stringify(accepted.body)}`);
+  const duplicate = await request("/api/ntmy/internal/analytics/track", { method: "POST", headers, body: JSON.stringify(event) });
+  assert(duplicate.status === 200 && duplicate.body?.duplicate === true, "Analytics event deduplication failed");
+  const overview = await request("/api/ntmy/internal/management/data?section=overview", { headers });
+  assert(overview.status === 200 && typeof overview.body?.users === "number" && !Object.hasOwn(overview.body, "passwordHash"), "Management overview did not return a safe DTO");
+  const authFingerprint = createHash("sha256").update(`auth-${suffix}`).digest("hex");
+  for (let attempt = 0; attempt < 5; attempt += 1) await request("/api/ntmy/internal/management/auth-event", { method: "POST", headers, body: JSON.stringify({ fingerprint: authFingerprint, outcome: "failure" }) });
+  const lock = await request(`/api/ntmy/internal/management/auth-status?fingerprint=${authFingerprint}`, { headers });
+  assert(lock.status === 200 && lock.body?.locked === true && lock.body?.attemptsRemaining === 0, "Management lockout was not enforced after five failures");
+  const storedViews = await listRecords("analytics_page_views", { filter: `event_id = "${eventId}"`, perPage: "10" }, adminToken);
+  assert(storedViews.totalItems === 1, "Analytics event transaction created duplicate page views");
+}
+
+async function expectVerifiedCommunityMetricsThroughBff() {
+  const internalSecret = process.env.POCKETBASE_INTERNAL_WEBHOOK_SECRET;
+  assert(nextWebhookBaseUrl && internalSecret, "Community metrics checks require the BFF and PocketBase internal secret");
+
+  const rejected = await request("/api/ntmy/internal/public-metrics", { method: "GET" });
+  assert(rejected.status === 403, `PocketBase public metrics route accepted an unauthenticated request: ${rejected.status}`);
+
+  const internal = await request("/api/ntmy/internal/public-metrics", {
+    method: "GET",
+    headers: { "X-Internal-Webhook-Secret": internalSecret }
+  });
+  assert(
+    internal.status === 200
+      && Object.keys(internal.body ?? {}).join(",") === "verifiedCompletedSessionCount"
+      && Number.isSafeInteger(internal.body?.verifiedCompletedSessionCount)
+      && internal.body.verifiedCompletedSessionCount >= 0,
+    `PocketBase public metrics DTO was invalid: ${JSON.stringify(internal)}`
+  );
+
+  const response = await fetch(new URL("/api/public/community-metrics", nextWebhookBaseUrl));
+  const body = await response.json();
+  assert(
+    response.status === 200
+      && Object.keys(body ?? {}).join(",") === "verifiedCompletedSessionCount"
+      && Number.isSafeInteger(body?.verifiedCompletedSessionCount)
+      && body.verifiedCompletedSessionCount >= 0,
+    `Public BFF community metrics DTO was invalid: ${response.status} ${JSON.stringify(body)}`
+  );
+}
+
 async function expectNotificationDispatchThroughBff() {
   const workerSecret = process.env.NOTIFICATION_WORKER_SECRET;
   assert(nextWebhookBaseUrl && workerSecret, "Notification dispatch checks require a running Next BFF and worker secret");
@@ -207,6 +264,8 @@ async function main() {
 
   await expectStatus("/api/health", 200);
   await expectLiveKitHealthThroughBff();
+  await expectPrivateManagementInfrastructure(adminToken);
+  await expectVerifiedCommunityMetricsThroughBff();
   await expectNotificationDispatchThroughBff();
   await expectLiveKitLifecycleThroughBff();
 

@@ -212,6 +212,14 @@ routerAdd("GET", "/api/ntmy/languages", (e) => {
   return e.json(200, languages.map((language) => ({ id: language.id, code: language.getString("code"), name: language.getString("name"), upcomingSessionCount: activity[language.id] ? activity[language.id].count : 0, nextSessionStartsAt: activity[language.id] ? activity[language.id].next : null })));
 }, $apis.requireAuth("users"));
 
+routerAdd("GET", "/api/ntmy/internal/public-metrics", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var metrics = e.app.findRecordById("public_metrics", ntmy.VERIFIED_SESSION_METRICS_RECORD_ID);
+  return e.json(200, {
+    verifiedCompletedSessionCount: metrics.getInt("verified_completed_session_count")
+  });
+}, (e) => require(__hooks + "/ntmy.js").internalWebhookOnly(e));
+
 routerAdd("POST", "/api/ntmy/onboarding", (e) => {
   var ntmy = require(__hooks + "/ntmy.js");
   Object.keys(ntmy).forEach(function (key) { globalThis[key] = ntmy[key]; });
@@ -652,6 +660,166 @@ routerAdd("POST", "/api/ntmy/moderation/reports", (e) => {
   return e.json(201, result);
 }, $apis.requireAuth("users"));
 
+routerAdd("POST", "/api/ntmy/internal/analytics/track", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var expected = $os.getenv("MANAGEMENT_INTERNAL_SECRET");
+  if (!expected || e.request.header.get("X-Management-Internal-Secret") !== expected) throw new ForbiddenError("Internal endpoint only");
+  var data = ntmy.parseRequestBody(e, { visitorHash: "", eventId: "", path: "", referrerHost: "", device: "other", utmSource: "", utmMedium: "", utmCampaign: "" });
+  var visitorHash = ntmy.requiredText(data.visitorHash, "visitor hash", 64);
+  var eventId = ntmy.requiredText(data.eventId, "event id", 80);
+  var path = ntmy.requiredText(data.path, "path", 200);
+  var device = ["desktop", "mobile", "tablet", "other"].indexOf(String(data.device)) >= 0 ? String(data.device) : "other";
+  var now = new Date();
+  var duplicate = false;
+  $app.runInTransaction((txApp) => {
+    try { txApp.findFirstRecordByFilter("analytics_page_views", "event_id = {:eventId}", { eventId: eventId }); duplicate = true; return; } catch (_) {}
+    var cutoff = new Date(now.getTime() - 30 * 60 * 1000);
+    var visit;
+    var isNewVisit = false;
+    try { visit = txApp.findFirstRecordByFilter("analytics_visits", "visitor_hash = {:visitor} && last_seen_at >= {:cutoff}", { visitor: visitorHash, cutoff: ntmy.dateValue(cutoff) }); }
+    catch (_) {
+      isNewVisit = true;
+      visit = new Record(txApp.findCollectionByNameOrId("analytics_visits"));
+      visit.set("visitor_hash", visitorHash); visit.set("started_at", ntmy.dateValue(now)); visit.set("landing_path", path);
+      visit.set("referrer_host", ntmy.optionalText(data.referrerHost, 200)); visit.set("device", device);
+      visit.set("utm_source", ntmy.optionalText(data.utmSource, 100)); visit.set("utm_medium", ntmy.optionalText(data.utmMedium, 100)); visit.set("utm_campaign", ntmy.optionalText(data.utmCampaign, 100));
+    }
+    visit.set("last_seen_at", ntmy.dateValue(now)); txApp.save(visit);
+    var view = new Record(txApp.findCollectionByNameOrId("analytics_page_views"));
+    view.set("visit", visit.id); view.set("event_id", eventId); view.set("path", path); view.set("occurred_at", ntmy.dateValue(now)); txApp.save(view);
+    var day = now.toISOString().slice(0, 10);
+    var daily;
+    try { daily = txApp.findFirstRecordByFilter("analytics_daily", "day = {:day}", { day: day }); }
+    catch (_) { daily = new Record(txApp.findCollectionByNameOrId("analytics_daily")); daily.set("day", day); daily.set("visitors", 0); daily.set("visits", 0); daily.set("page_views", 0); }
+    if (isNewVisit) {
+      var dayStart = new Date(day + "T00:00:00.000Z");
+      var prior = txApp.findRecordsByFilter("analytics_visits", "visitor_hash = {:visitor} && started_at >= {:start} && id != {:visit}", "id", 1, 0, { visitor: visitorHash, start: ntmy.dateValue(dayStart), visit: visit.id });
+      daily.set("visits", daily.getInt("visits") + 1);
+      if (!prior.length) daily.set("visitors", daily.getInt("visitors") + 1);
+    }
+    daily.set("page_views", daily.getInt("page_views") + 1); txApp.save(daily);
+  });
+  return e.json(duplicate ? 200 : 201, { accepted: true, duplicate: duplicate });
+});
+
+routerAdd("GET", "/api/ntmy/internal/management/auth-status", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var expected = $os.getenv("MANAGEMENT_INTERNAL_SECRET");
+  if (!expected || e.request.header.get("X-Management-Internal-Secret") !== expected) throw new ForbiddenError("Internal endpoint only");
+  var fingerprint = ntmy.requiredText(String((e.requestInfo().query || {}).fingerprint || ""), "fingerprint", 64);
+  var cutoff = ntmy.dateValue(new Date(Date.now() - 15 * 60 * 1000));
+  var events = e.app.findRecordsByFilter("management_auth_events", "fingerprint = {:fingerprint} && occurred_at >= {:cutoff}", "-occurred_at", 20, 0, { fingerprint: fingerprint, cutoff: cutoff });
+  var failures = [];
+  for (var index = 0; index < events.length; index += 1) { if (events[index].getString("outcome") === "success") break; if (events[index].getString("outcome") === "failure") failures.push(events[index]); }
+  return e.json(200, { locked: failures.length >= 5, attemptsRemaining: Math.max(0, 5 - failures.length) });
+});
+
+routerAdd("POST", "/api/ntmy/internal/management/auth-event", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var expected = $os.getenv("MANAGEMENT_INTERNAL_SECRET");
+  if (!expected || e.request.header.get("X-Management-Internal-Secret") !== expected) throw new ForbiddenError("Internal endpoint only");
+  var data = ntmy.parseRequestBody(e, { fingerprint: "", outcome: "failure", metadata: {} });
+  var outcome = String(data.outcome || "");
+  if (["success", "failure", "logout", "export"].indexOf(outcome) < 0) throw new BadRequestError("Invalid management event");
+  var record = new Record(e.app.findCollectionByNameOrId("management_auth_events"));
+  record.set("fingerprint", ntmy.requiredText(data.fingerprint, "fingerprint", 64)); record.set("outcome", outcome); record.set("occurred_at", ntmy.dateValue(new Date())); record.set("metadata", data.metadata || {}); e.app.save(record);
+  return e.json(201, { recorded: true });
+});
+
+routerAdd("POST", "/api/ntmy/internal/management/heartbeat", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var expected = $os.getenv("MANAGEMENT_INTERNAL_SECRET");
+  if (!expected || e.request.header.get("X-Management-Internal-Secret") !== expected) throw new ForbiddenError("Internal endpoint only");
+  var data = ntmy.parseRequestBody(e, { service: "" });
+  var service = String(data.service || "");
+  if (["notification_worker", "livekit_worker"].indexOf(service) < 0) throw new BadRequestError("Invalid service");
+  $app.runInTransaction((txApp) => {
+    var heartbeat;
+    try { heartbeat = txApp.findFirstRecordByFilter("management_service_heartbeats", "service = {:service}", { service: service }); }
+    catch (_) { heartbeat = new Record(txApp.findCollectionByNameOrId("management_service_heartbeats")); heartbeat.set("service", service); }
+    heartbeat.set("last_seen_at", ntmy.dateValue(new Date())); txApp.save(heartbeat);
+  });
+  return e.json(200, { recorded: true });
+});
+
+routerAdd("GET", "/api/ntmy/internal/management/data", (e) => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var expected = $os.getenv("MANAGEMENT_INTERNAL_SECRET");
+  if (!expected || e.request.header.get("X-Management-Internal-Secret") !== expected) throw new ForbiddenError("Internal endpoint only");
+  var query = e.requestInfo().query || {};
+  var section = String(query.section || "overview");
+  var search = String(query.search || "").trim().toLowerCase().slice(0, 100);
+  var page = Math.max(1, Math.floor(Number(query.page || 1)) || 1);
+  var perPage = Math.min(50, Math.max(10, Math.floor(Number(query.perPage || 25)) || 25));
+  function all(name, filter, sort, params) { return ntmy.findAllRecordsByFilter(e.app, name, filter || "id != ''", sort || "id", params || {}); }
+  function languageName(id) { try { return e.app.findRecordById("languages", id).getString("name"); } catch (_) { return "Unknown"; } }
+  function userName(id) { try { return e.app.findRecordById("users", id).getString("display_name"); } catch (_) { return "Deleted member"; } }
+  function paginate(items) { var start = (page - 1) * perPage; return { items: items.slice(start, start + perPage), page: page, perPage: perPage, totalItems: items.length, totalPages: Math.max(1, Math.ceil(items.length / perPage)) }; }
+  function participantDto(record) { return { id: record.id, userId: record.getString("user"), displayName: userName(record.getString("user")), role: record.getString("role") === "support" ? "native" : "practice", reservationStatus: record.getString("reservation_status"), joinedAt: record.getString("joined_at") || null, leftAt: record.getString("left_at") || null, absenceReason: record.getString("absence_reason") || null }; }
+  function sessionDto(record) {
+    var participants = all("session_participants", "session = {:session}", "id", { session: record.id }).map(participantDto);
+    return { id: record.id, languageName: languageName(record.getString("language")), hostId: record.getString("host"), hostName: userName(record.getString("host")), startsAt: record.getString("starts_at"), endsAt: record.getString("ends_at"), note: record.getString("description") || record.getString("topic") || "", status: record.getString("status"), participantCount: participants.length, participants: participants, createdAt: record.getString("created") || null };
+  }
+  if (section === "overview") {
+    var users = all("users"), profiles = all("user_profiles"), sessions = all("sessions"), participants = all("session_participants"), reports = all("moderation_reports"), visits = all("analytics_visits"), views = all("analytics_page_views");
+    return e.json(200, { visits: visits.length, pageViews: views.length, users: users.length, verifiedUsers: users.filter((r) => r.verified()).length, onboardedUsers: profiles.filter((r) => r.getBool("onboarding_complete")).length, sessions: sessions.length, scheduledSessions: sessions.filter((r) => r.getString("status") === "scheduled").length, completedSessions: sessions.filter((r) => r.getString("status") === "completed").length, cancelledSessions: sessions.filter((r) => r.getString("status") === "cancelled").length, attendedReservations: participants.filter((r) => r.getString("reservation_status") === "attended").length, noShows: participants.filter((r) => r.getString("reservation_status") === "no_show").length, openReports: reports.filter((r) => ["open", "reviewing"].indexOf(r.getString("status")) >= 0).length, recentSessions: sessions.sort((a, b) => String(b.getString("starts_at")).localeCompare(String(a.getString("starts_at")))).slice(0, 6).map(sessionDto) });
+  }
+  if (section === "users") {
+    var userItems = all("users", "id != ''", "-created").map((user) => {
+      var profile; try { profile = e.app.findFirstRecordByFilter("user_profiles", "user = {:user}", { user: user.id }); } catch (_) { profile = null; }
+      var languages = all("user_languages", "user = {:user}", "position,id", { user: user.id }).map((entry) => ({ name: languageName(entry.getString("language")), level: entry.getString("level"), native: entry.getBool("is_native") }));
+      var reservations = all("session_participants", "user = {:user}", "id", { user: user.id });
+      return { id: user.id, email: user.email(), displayName: user.getString("display_name"), verified: user.verified(), createdAt: user.getString("created"), status: profile ? profile.getString("status") : "unknown", onboardingComplete: profile ? profile.getBool("onboarding_complete") : false, timeZone: profile ? profile.getString("time_zone") : "UTC", suspendedUntil: profile ? (profile.getString("no_show_suspended_until") || null) : null, languages: languages, sessionStats: { total: reservations.length, attended: reservations.filter((r) => r.getString("reservation_status") === "attended").length, noShow: reservations.filter((r) => r.getString("reservation_status") === "no_show").length, cancelled: reservations.filter((r) => r.getString("reservation_status") === "cancelled").length } };
+    }).filter((item) => !search || (item.email + " " + item.displayName).toLowerCase().indexOf(search) >= 0);
+    return e.json(200, paginate(userItems));
+  }
+  if (section === "user") {
+    var userId = ntmy.requiredText(String(query.id || ""), "user id", 30);
+    var target = e.app.findRecordById("users", userId);
+    var result = all("users", "id = {:id}", "id", { id: target.id });
+    query.search = target.email();
+    var profile; try { profile = e.app.findFirstRecordByFilter("user_profiles", "user = {:user}", { user: target.id }); } catch (_) { profile = null; }
+    var userLanguages = all("user_languages", "user = {:user}", "position,id", { user: target.id }).map((entry) => ({ name: languageName(entry.getString("language")), level: entry.getString("level"), native: entry.getBool("is_native") }));
+    var userReservations = all("session_participants", "user = {:user}", "id", { user: target.id });
+    return e.json(200, { id: target.id, email: target.email(), displayName: target.getString("display_name"), verified: target.verified(), createdAt: target.getString("created"), status: profile ? profile.getString("status") : "unknown", onboardingComplete: profile ? profile.getBool("onboarding_complete") : false, timeZone: profile ? profile.getString("time_zone") : "UTC", suspendedUntil: profile ? (profile.getString("no_show_suspended_until") || null) : null, languages: userLanguages, sessionStats: { total: userReservations.length, attended: userReservations.filter((r) => r.getString("reservation_status") === "attended").length, noShow: userReservations.filter((r) => r.getString("reservation_status") === "no_show").length, cancelled: userReservations.filter((r) => r.getString("reservation_status") === "cancelled").length }, sessions: userReservations.map((participant) => sessionDto(e.app.findRecordById("sessions", participant.getString("session")))) });
+  }
+  if (section === "sessions") {
+    var sessionItems = all("sessions", "id != ''", "-starts_at").map(sessionDto).filter((item) => !search || (item.languageName + " " + item.hostName + " " + item.status).toLowerCase().indexOf(search) >= 0);
+    return e.json(200, paginate(sessionItems));
+  }
+  if (section === "session") return e.json(200, sessionDto(e.app.findRecordById("sessions", ntmy.requiredText(String(query.id || ""), "session id", 30))));
+  if (section === "moderation") {
+    var reportItems = all("moderation_reports", "id != ''", "-created").map((report) => ({ id: report.id, reporterId: report.getString("reporter"), reporterName: userName(report.getString("reporter")), reportedUserId: report.getString("reported_user") || null, reportedUserName: report.getString("reported_user") ? userName(report.getString("reported_user")) : null, sessionId: report.getString("session") || null, reason: report.getString("reason"), details: report.getString("details"), status: report.getString("status"), createdAt: report.getString("created") }));
+    return e.json(200, paginate(reportItems));
+  }
+  if (section === "analytics") {
+    var days = Math.min(90, Math.max(7, Math.floor(Number(query.days || 30)) || 30));
+    var customFrom = /^\d{4}-\d{2}-\d{2}$/.test(String(query.from || "")) ? String(query.from) : "";
+    var customTo = /^\d{4}-\d{2}-\d{2}$/.test(String(query.to || "")) ? String(query.to) : "";
+    var sinceDate = customFrom ? new Date(customFrom + "T00:00:00.000Z") : new Date(Date.now() - days * 86400000);
+    var untilDate = customTo ? new Date(customTo + "T00:00:00.000Z") : new Date();
+    if (customTo) untilDate.setUTCDate(untilDate.getUTCDate() + 1);
+    if (!Number.isFinite(sinceDate.getTime()) || !Number.isFinite(untilDate.getTime()) || sinceDate >= untilDate || untilDate.getTime() - sinceDate.getTime() > 90 * 86400000) throw new BadRequestError("Analytics period must be valid and at most 90 days");
+    var since = ntmy.dateValue(sinceDate), until = ntmy.dateValue(untilDate);
+    var fromDay = since.slice(0, 10), toDay = new Date(untilDate.getTime() - 1).toISOString().slice(0, 10);
+    var daily = all("analytics_daily", "day >= {:fromDay} && day <= {:toDay}", "day", { fromDay: fromDay, toDay: toDay }).map((r) => ({ day: r.getString("day"), visitors: r.getInt("visitors"), visits: r.getInt("visits"), pageViews: r.getInt("page_views") }));
+    var rangeVisits = all("analytics_visits", "started_at >= {:since} && started_at < {:until}", "-started_at", { since: since, until: until });
+    var rangeViews = all("analytics_page_views", "occurred_at >= {:since} && occurred_at < {:until}", "-occurred_at", { since: since, until: until });
+    function group(items, getter) { var counts = {}; items.forEach((item) => { var key = getter(item) || "Direct / unknown"; counts[key] = (counts[key] || 0) + 1; }); return Object.keys(counts).map((key) => ({ label: key, value: counts[key] })).sort((a, b) => b.value - a.value).slice(0, 12); }
+    var registered = all("audit_logs", "action = 'account_registered' && created >= {:since} && created < {:until}", "id", { since: since, until: until }).length, verified = all("audit_logs", "action = 'account_email_verified' && created >= {:since} && created < {:until}", "id", { since: since, until: until }).length;
+    return e.json(200, { days: days, from: fromDay, to: toDay, daily: daily, totals: { visitors: daily.reduce((n, d) => n + d.visitors, 0), visits: rangeVisits.length, pageViews: rangeViews.length, registrations: registered, verifiedAccounts: verified }, pages: group(rangeViews, (r) => r.getString("path")), sources: group(rangeVisits, (r) => r.getString("utm_source") || r.getString("referrer_host") || "Direct"), devices: group(rangeVisits, (r) => r.getString("device")), conversion: { registrationRate: rangeVisits.length ? registered / rangeVisits.length : 0, verificationRate: registered ? verified / registered : 0 } });
+  }
+  if (section === "system") {
+    var failedNotifications = all("notifications", "delivery_status = 'failed'", "-deliver_after", {}).length;
+    var failedWebhooks = all("webhook_events", "processing_status = 'failed'", "-processed_at", {}).length;
+    var lastWebhook = all("webhook_events", "id != ''", "-processed_at", {})[0] || null;
+    var heartbeats = all("management_service_heartbeats", "id != ''", "service", {});
+    var heartbeatMap = {}; heartbeats.forEach((heartbeat) => { heartbeatMap[heartbeat.getString("service")] = heartbeat.getString("last_seen_at"); });
+    return e.json(200, { failedNotifications: failedNotifications, failedWebhooks: failedWebhooks, lastWebhookAt: lastWebhook ? lastWebhook.getString("processed_at") : null, notificationWorkerLastSeenAt: heartbeatMap.notification_worker || null, liveKitWorkerLastSeenAt: heartbeatMap.livekit_worker || null });
+  }
+  throw new BadRequestError("Unknown management section");
+});
+
 // These two routes are intentionally not proxied by Next.js. A PocketBase
 // superuser can reach them only over the private loopback administration path.
 routerAdd("POST", "/api/ntmy/admin/participants/{participantId}/technical-exception", (e) => {
@@ -839,9 +1007,24 @@ cronAdd("ntmy-close-expired-sessions", "* * * * *", () => {
           suspendForNoShows(txApp, participant.getString("user"));
         }
       });
+      if (hasMinimumConfirmedAttendance(txApp, current.id)) {
+        incrementVerifiedCompletedSessionCount(txApp);
+      }
       current.set("status", "completed");
       txApp.save(current);
       audit(txApp, "", "session_completed", "session", current.id, {});
     });
+  });
+});
+
+// Detailed anonymous analytics are short-lived. Daily aggregates contain no
+// visitor identifier and remain available for long-term trends.
+cronAdd("ntmy-prune-private-analytics", "17 3 * * *", () => {
+  var ntmy = require(__hooks + "/ntmy.js");
+  var cutoff = ntmy.dateValue(new Date(Date.now() - 90 * 86400000));
+  $app.runInTransaction((txApp) => {
+    txApp.findRecordsByFilter("analytics_page_views", "occurred_at < {:cutoff}", "occurred_at", 1000, 0, { cutoff: cutoff }).forEach((record) => txApp.delete(record));
+    txApp.findRecordsByFilter("analytics_visits", "last_seen_at < {:cutoff}", "last_seen_at", 1000, 0, { cutoff: cutoff }).forEach((record) => txApp.delete(record));
+    txApp.findRecordsByFilter("management_auth_events", "occurred_at < {:cutoff}", "occurred_at", 1000, 0, { cutoff: cutoff }).forEach((record) => txApp.delete(record));
   });
 });

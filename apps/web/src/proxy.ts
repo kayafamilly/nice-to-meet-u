@@ -27,8 +27,11 @@ export function proxy(request: NextRequest): NextResponse {
   response.headers.set("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()");
 
   const pathname = request.nextUrl.pathname;
-  if (pathname.startsWith("/api/") || pathname === "/app" || pathname.startsWith("/app/") || ["/login", "/register", "/verify-email", "/forgot-password", "/reset-password"].includes(pathname)) {
+  if (pathname.startsWith("/api/") || pathname === "/app" || pathname.startsWith("/app/") || pathname === "/management" || pathname.startsWith("/management/") || ["/login", "/register", "/verify-email", "/forgot-password", "/reset-password"].includes(pathname)) {
     response.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  }
+  if (pathname === "/management" || pathname.startsWith("/management/") || pathname.startsWith("/api/management/")) {
+    response.headers.set("Cache-Control", "private, no-store, max-age=0");
   }
 
   if (!request.cookies.has(CSRF_COOKIE)) {

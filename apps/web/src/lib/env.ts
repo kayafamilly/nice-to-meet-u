@@ -14,7 +14,11 @@ const serverSchema = z.object({
   VAPID_SUBJECT: z.string().min(1),
   VAPID_PUBLIC_KEY: z.string().min(32),
   VAPID_PRIVATE_KEY: z.string().min(32),
-  SESSION_ENCRYPTION_SECRET: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "must be a 32-byte base64url value")
+  SESSION_ENCRYPTION_SECRET: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "must be a 32-byte base64url value"),
+  MANAGEMENT_PASSWORD_HASH: z.string().optional(),
+  MANAGEMENT_SESSION_SECRET: z.string().regex(/^[A-Za-z0-9_-]{43}$/).optional(),
+  MANAGEMENT_INTERNAL_SECRET: z.string().min(32).optional(),
+  ANALYTICS_HASH_SECRET: z.string().min(32).optional()
 });
 
 const publicSchema = serverSchema.pick({
