@@ -25,7 +25,11 @@ export async function GET(request: NextRequest) {
   } else if (type === "analytics") {
     const period = managementPeriod(request.nextUrl.searchParams.get("period") || undefined);
     const report = await managementData<ManagementAnalyticsReport>("analytics", { period });
-    content = csvDocument([["Période", "Visiteurs", "Visites", "Pages vues"], ...report.trend.map((item) => [item.label, item.visitors, item.visits, item.pageViews])]);
+    content = csvDocument([
+      ["Type", "Segment", "Visiteurs", "Visites", "Pages vues", "Inscriptions", "Conversion"],
+      ...report.trend.map((item) => ["Période", item.label, item.visitors, item.visits, item.pageViews, "", ""]),
+      ...report.media.map((item) => ["Média", item.label, "", item.visits, item.pageViews, item.registrations, item.visits ? item.registrations / item.visits : 0])
+    ]);
   } else return NextResponse.json({ error: "INVALID_EXPORT" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   await managementInternal("/api/ntmy/internal/management/auth-event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fingerprint: await managementFingerprint(), outcome: "export", metadata: { type } }) });
   return new NextResponse(content, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="nicetomeetu-${type}.csv"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });

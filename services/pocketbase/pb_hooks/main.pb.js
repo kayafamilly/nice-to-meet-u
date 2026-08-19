@@ -90,10 +90,11 @@ onBootstrap((e) => {
 routerAdd("POST", "/api/ntmy/auth/register", (e) => {
   var ntmy = require(__hooks + "/ntmy.js");
   Object.keys(ntmy).forEach(function (key) { globalThis[key] = ntmy[key]; });
-  var data = ntmy.parseRequestBody(e, { displayName: "", email: "", password: "", passwordConfirm: "", isAdultConfirmed: false });
+  var data = ntmy.parseRequestBody(e, { displayName: "", email: "", password: "", passwordConfirm: "", isAdultConfirmed: false, visitorHash: "" });
   var displayName = ntmy.requiredText(data.displayName, "display name", 40);
   var email = ntmy.requiredText(data.email, "email", 254).toLowerCase();
   var password = String(data.password || "");
+  var visitorHash = /^[a-f0-9]{64}$/.test(String(data.visitorHash || "")) ? String(data.visitorHash) : "";
   if (!data.isAdultConfirmed || password.length < 12 || password !== String(data.passwordConfirm || "")) {
     throw new BadRequestError("Invalid registration data");
   }
@@ -116,6 +117,22 @@ routerAdd("POST", "/api/ntmy/auth/register", (e) => {
     profile.set("onboarding_complete", false);
     profile.set("status", "active");
     txApp.save(profile);
+    var source = "Non attribué", medium = "", campaign = "";
+    if (visitorHash) {
+      var visits = txApp.findRecordsByFilter("analytics_visits", "visitor_hash = {:visitor}", "-started_at", 1, 0, { visitor: visitorHash });
+      if (visits.length) {
+        source = visits[0].getString("utm_source") || visits[0].getString("referrer_host") || "Direct";
+        medium = visits[0].getString("utm_medium");
+        campaign = visits[0].getString("utm_campaign");
+      }
+    }
+    var conversion = new Record(txApp.findCollectionByNameOrId("analytics_conversions"));
+    conversion.set("user", user.id);
+    conversion.set("registered_at", ntmy.dateValue(new Date()));
+    conversion.set("source", source);
+    conversion.set("medium", medium);
+    conversion.set("campaign", campaign);
+    txApp.save(conversion);
     ntmy.audit(txApp, user.id, "account_registered", "user", user.id, {});
   });
   return e.json(201, { created: true });
@@ -782,6 +799,24 @@ routerAdd("GET", "/api/ntmy/internal/management/data", (e) => {
   function metric(value, previous) { return { value: value, previous: previous, change: previous ? (value - previous) / previous : (value ? null : 0) }; }
   function ratio(numerator, denominator) { return denominator ? numerator / denominator : 0; }
   function breakdown(sql, definition, params) { return sqlAll(sql, definition, params).map((item) => { var result = {}; Object.keys(definition).forEach((key) => { result[key] = typeof definition[key] === "number" ? Number(item[key]) : String(item[key] || ""); }); return result; }); }
+  function mediaLabelSql(source, referrer) {
+    var cleanSource = "TRIM(COALESCE(" + source + ", ''))";
+    var cleanReferrer = "TRIM(COALESCE(" + referrer + ", ''))";
+    var signal = "LOWER(CASE WHEN " + cleanSource + " != '' THEN " + cleanSource + " ELSE " + cleanReferrer + " END)";
+    var fallback = "CASE WHEN " + cleanSource + " != '' THEN " + cleanSource + " ELSE " + cleanReferrer + " END";
+    return "CASE WHEN " + signal + " = '' THEN 'Direct' " +
+      "WHEN " + signal + " LIKE '%tiktok%' THEN 'TikTok' " +
+      "WHEN " + signal + " LIKE '%instagram%' THEN 'Instagram' " +
+      "WHEN " + signal + " LIKE '%facebook%' OR " + signal + " = 'fb' THEN 'Facebook' " +
+      "WHEN " + signal + " LIKE '%reddit%' THEN 'Reddit' " +
+      "WHEN " + signal + " LIKE '%google%' OR " + signal + " LIKE '%googleadservices%' THEN 'Google' " +
+      "WHEN " + signal + " LIKE '%youtube%' OR " + signal + " = 'youtu.be' THEN 'YouTube' " +
+      "WHEN " + signal + " LIKE '%linkedin%' THEN 'LinkedIn' " +
+      "WHEN " + signal + " LIKE '%twitter%' OR " + signal + " = 'x' OR " + signal + " LIKE '%x.com%' THEN 'X / Twitter' " +
+      "WHEN " + signal + " LIKE '%bing%' THEN 'Bing' " +
+      "WHEN " + signal + " LIKE '%newsletter%' OR " + signal + " LIKE '%mailchimp%' OR " + signal + " LIKE '%substack%' THEN 'E-mail / Newsletter' " +
+      "ELSE " + fallback + " END";
+  }
   if (section === "overview" || section === "analytics") {
     var period = ["day", "week", "month"].indexOf(String(query.period || "month")) >= 0 ? String(query.period || "month") : "month";
     var duration = period === "day" ? 86400000 : (period === "week" ? 7 * 86400000 : 30 * 86400000);
@@ -792,8 +827,16 @@ routerAdd("GET", "/api/ntmy/internal/management/data", (e) => {
     var bucketVisit = period === "day" ? "substr(started_at, 1, 13) || ':00'" : "substr(started_at, 1, 10)";
     var bucketView = period === "day" ? "substr(occurred_at, 1, 13) || ':00'" : "substr(occurred_at, 1, 10)";
     var trend = breakdown("SELECT bucket AS label, COUNT(DISTINCT CASE WHEN visits = 1 THEN visitor END) AS visitors, SUM(visits) AS visits, SUM(pageViews) AS pageViews FROM (SELECT " + bucketVisit + " AS bucket, visitor_hash AS visitor, 1 AS visits, 0 AS pageViews FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} UNION ALL SELECT " + bucketView + " AS bucket, '' AS visitor, 0 AS visits, 1 AS pageViews FROM analytics_page_views WHERE occurred_at >= {:since} AND occurred_at < {:until}) GROUP BY bucket ORDER BY bucket", { label: "", visitors: 0, visits: 0, pageViews: 0 }, { since: since, until: until });
-    var sourceSql = "SELECT CASE WHEN TRIM(utm_source) != '' THEN utm_source WHEN TRIM(referrer_host) != '' THEN referrer_host ELSE 'Direct' END AS label, COUNT(*) AS value FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} GROUP BY label ORDER BY value DESC LIMIT 10";
+    var visitMediaLabel = mediaLabelSql("v.utm_source", "v.referrer_host");
+    var conversionMediaLabel = mediaLabelSql("c.source", "''");
+    var sourceSql = "SELECT " + visitMediaLabel + " AS label, COUNT(*) AS value FROM analytics_visits v WHERE v.started_at >= {:since} AND v.started_at < {:until} GROUP BY label ORDER BY value DESC LIMIT 10";
     var sources = breakdown(sourceSql, { label: "", value: 0 }, { since: since, until: until });
+    var media = breakdown("SELECT label, SUM(visits) AS visits, SUM(pageViews) AS pageViews, SUM(registrations) AS registrations FROM (" +
+      "SELECT " + visitMediaLabel + " AS label, COUNT(*) AS visits, 0 AS pageViews, 0 AS registrations FROM analytics_visits v WHERE v.started_at >= {:since} AND v.started_at < {:until} GROUP BY label " +
+      "UNION ALL SELECT " + visitMediaLabel + " AS label, 0 AS visits, COUNT(*) AS pageViews, 0 AS registrations FROM analytics_page_views pv INNER JOIN analytics_visits v ON v.id = pv.visit WHERE pv.occurred_at >= {:since} AND pv.occurred_at < {:until} GROUP BY label " +
+      "UNION ALL SELECT " + conversionMediaLabel + " AS label, 0 AS visits, 0 AS pageViews, COUNT(*) AS registrations FROM analytics_conversions c WHERE c.registered_at >= {:since} AND c.registered_at < {:until} GROUP BY label " +
+      "UNION ALL SELECT 'Non attribué' AS label, 0 AS visits, 0 AS pageViews, COUNT(*) AS registrations FROM users u WHERE u.created >= {:since} AND u.created < {:until} AND NOT EXISTS (SELECT 1 FROM analytics_conversions c WHERE c.user = u.id)" +
+      ") GROUP BY label HAVING SUM(visits) > 0 OR SUM(pageViews) > 0 OR SUM(registrations) > 0 ORDER BY visits DESC, pageViews DESC, registrations DESC, label", { label: "", visits: 0, pageViews: 0, registrations: 0 }, { since: since, until: until });
     var campaigns = breakdown("SELECT utm_campaign AS label, COUNT(*) AS value FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} AND TRIM(utm_campaign) != '' GROUP BY utm_campaign ORDER BY value DESC LIMIT 10", { label: "", value: 0 }, { since: since, until: until });
     var devices = breakdown("SELECT CASE WHEN TRIM(device) != '' THEN device ELSE 'other' END AS label, COUNT(*) AS value FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} GROUP BY label ORDER BY value DESC", { label: "", value: 0 }, { since: since, until: until });
     var pages = breakdown("SELECT path AS label, COUNT(*) AS value FROM analytics_page_views WHERE occurred_at >= {:since} AND occurred_at < {:until} GROUP BY path ORDER BY value DESC LIMIT 10", { label: "", value: 0 }, { since: since, until: until });
@@ -808,7 +851,7 @@ routerAdd("GET", "/api/ntmy/internal/management/data", (e) => {
     if (openReports > 0) alerts.push({ tone: "danger", title: "Modération à traiter", copy: openReports + " signalement(s) attendent une revue.", href: "/management/moderation" });
     if (!alerts.length) alerts.push({ tone: "success", title: "Aucun signal critique", copy: "Les principaux indicateurs ne demandent pas d'action immédiate.", href: "/management/system" });
     var recentSessions = e.app.findRecordsByFilter("sessions", "id != ''", "-starts_at", 6, 0).map(sessionDto);
-    return e.json(200, { period: period, from: sinceDate.toISOString(), to: untilDate.toISOString(), metrics: metrics, current: current, ratios: { pagesPerVisit: ratio(current.pageViews, current.visits), visitToSignup: ratio(current.registrations, current.visits), verificationRate: ratio(current.verifiedAccounts, current.registrations), onboardingRate: ratio(current.onboardedAccounts, current.registrations), activationRate: ratio(current.activatedAccounts, current.registrations), fillRate: ratio(current.reservations, current.sessions * 4), attendanceRate: ratio(current.attendances, current.attendances + current.noShows), noShowRate: ratio(current.noShows, current.attendances + current.noShows) }, trend: trend, pages: pages, sources: sources, campaigns: campaigns, devices: devices, languages: languages, timeSlots: timeSlots, openReports: openReports, alerts: alerts, recentSessions: recentSessions });
+    return e.json(200, { period: period, from: sinceDate.toISOString(), to: untilDate.toISOString(), metrics: metrics, current: current, ratios: { pagesPerVisit: ratio(current.pageViews, current.visits), visitToSignup: ratio(current.registrations, current.visits), verificationRate: ratio(current.verifiedAccounts, current.registrations), onboardingRate: ratio(current.onboardedAccounts, current.registrations), activationRate: ratio(current.activatedAccounts, current.registrations), fillRate: ratio(current.reservations, current.sessions * 4), attendanceRate: ratio(current.attendances, current.attendances + current.noShows), noShowRate: ratio(current.noShows, current.attendances + current.noShows) }, trend: trend, media: media, pages: pages, sources: sources, campaigns: campaigns, devices: devices, languages: languages, timeSlots: timeSlots, openReports: openReports, alerts: alerts, recentSessions: recentSessions });
   }
   if (section === "users") {
     var userWhere = search ? " WHERE LOWER(email || ' ' || display_name) LIKE {:search}" : "";

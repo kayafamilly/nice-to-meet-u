@@ -135,7 +135,7 @@ async function expectLiveKitHealthThroughBff() {
 async function expectPrivateManagementInfrastructure(adminToken) {
   const internalSecret = process.env.MANAGEMENT_INTERNAL_SECRET;
   assert(internalSecret, "Management integration checks require MANAGEMENT_INTERNAL_SECRET");
-  for (const collection of ["analytics_visits", "analytics_page_views", "analytics_daily", "management_auth_events", "management_service_heartbeats"]) {
+  for (const collection of ["analytics_visits", "analytics_page_views", "analytics_daily", "analytics_conversions", "management_auth_events", "management_service_heartbeats"]) {
     const response = await request(`/api/collections/${collection}/records?perPage=1`);
     assert(response.status === 403, `${collection} must remain unavailable without a superuser token`);
   }
@@ -149,18 +149,26 @@ async function expectPrivateManagementInfrastructure(adminToken) {
   assert(accepted.status === 201 && accepted.body?.duplicate === false, `Analytics event was not accepted: ${JSON.stringify(accepted.body)}`);
   const duplicate = await request("/api/ntmy/internal/analytics/track", { method: "POST", headers, body: JSON.stringify(event) });
   assert(duplicate.status === 200 && duplicate.body?.duplicate === true, "Analytics event deduplication failed");
+  const attributedEmail = `attributed-${suffix}@example.test`;
+  await expectStatus("/api/ntmy/auth/register", 201, {
+    method: "POST",
+    body: JSON.stringify({ displayName: "Attributed visitor", email: attributedEmail, password, passwordConfirm: password, isAdultConfirmed: true, visitorHash })
+  });
   for (const period of ["day", "week", "month"]) {
     const overview = await request(`/api/ntmy/internal/management/data?section=overview&period=${period}`, { headers });
     assert(overview.status === 200 && overview.body?.period === period && typeof overview.body?.current?.visits === "number" && Array.isArray(overview.body?.alerts) && !Object.hasOwn(overview.body, "passwordHash"), `Management overview did not return a safe ${period} DTO: ${JSON.stringify(overview.body)}`);
   }
   const analytics = await request("/api/ntmy/internal/management/data?section=analytics&period=week", { headers });
   assert(analytics.status === 200 && analytics.body?.metrics?.visits?.value >= 1 && analytics.body?.sources?.some((item) => item.label === "integration"), `Management analytics did not expose the tracked acquisition signal: ${JSON.stringify(analytics.body)}`);
+  assert(analytics.body?.media?.some((item) => item.label === "integration" && item.visits >= 1 && item.pageViews >= 1 && item.registrations >= 1), `Management analytics did not join media traffic and registrations: ${JSON.stringify(analytics.body?.media)}`);
   const authFingerprint = createHash("sha256").update(`auth-${suffix}`).digest("hex");
   for (let attempt = 0; attempt < 5; attempt += 1) await request("/api/ntmy/internal/management/auth-event", { method: "POST", headers, body: JSON.stringify({ fingerprint: authFingerprint, outcome: "failure" }) });
   const lock = await request(`/api/ntmy/internal/management/auth-status?fingerprint=${authFingerprint}`, { headers });
   assert(lock.status === 200 && lock.body?.locked === true && lock.body?.attemptsRemaining === 0, "Management lockout was not enforced after five failures");
   const storedViews = await listRecords("analytics_page_views", { filter: `event_id = "${eventId}"`, perPage: "10" }, adminToken);
   assert(storedViews.totalItems === 1, "Analytics event transaction created duplicate page views");
+  const storedConversions = await listRecords("analytics_conversions", { filter: `source = "integration"`, perPage: "10" }, adminToken);
+  assert(storedConversions.items.some((item) => item.campaign === "management"), "Registration attribution was not stored in the private conversion collection");
 }
 
 async function expectVerifiedCommunityMetricsThroughBff() {

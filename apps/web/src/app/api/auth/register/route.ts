@@ -4,6 +4,8 @@ import { apiError, noStoreJson } from "@/lib/http";
 import { assertCsrf, assertTrustedOrigin } from "@/lib/security/request";
 import { assertRateLimit } from "@/lib/security/rate-limit";
 import { callGuestBusinessRoute } from "@/lib/pocketbase/server";
+import { ANALYTICS_VISITOR_COOKIE, analyticsVisitorHash } from "@/lib/analytics-identity";
+import { getServerEnv } from "@/lib/env";
 
 const inputSchema = z.object({
   displayName: z.string().trim().min(2).max(40),
@@ -19,6 +21,9 @@ export async function POST(request: NextRequest) {
     assertRateLimit(request, "auth-register", 4, 60 * 60 * 1000);
     const input = inputSchema.parse(await request.json());
     const email = input.email.toLowerCase();
+    const visitor = request.cookies.get(ANALYTICS_VISITOR_COOKIE)?.value;
+    const analyticsSecret = getServerEnv().ANALYTICS_HASH_SECRET;
+    const visitorHash = visitor && analyticsSecret ? analyticsVisitorHash(visitor, analyticsSecret) : "";
     await callGuestBusinessRoute<{ created: true }>("/api/ntmy/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -27,7 +32,8 @@ export async function POST(request: NextRequest) {
         email,
         password: input.password,
         passwordConfirm: input.password,
-        isAdultConfirmed: input.isAdultConfirmed
+        isAdultConfirmed: input.isAdultConfirmed,
+        visitorHash
       })
     });
     let emailSent = true;

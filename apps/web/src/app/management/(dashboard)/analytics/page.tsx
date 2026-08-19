@@ -20,7 +20,14 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
     </section>
 
     <section className="management-panel">
-      <div className="management-panel-head"><div><p className="eyebrow">Audience</p><h2>Trafic dans le temps</h2></div><Link href={`/api/management/export?type=analytics&period=${period}`} className="button secondary">Exporter en CSV</Link></div>
+      <div className="management-panel-head"><div><p className="eyebrow">Acquisition</p><h2>Performance par média</h2></div><Link href={`/api/management/export?type=analytics&period=${period}`} className="button secondary">Exporter en CSV</Link></div>
+      <p className="small-copy">Les visites et pages vues sont rattachées à leur source d’entrée. Les inscriptions sont attribuées à la dernière visite connue avant la création du compte.</p>
+      {data.media.length ? <div className="management-table-wrap"><table className="management-table"><thead><tr><th>Média</th><th>Visites</th><th>Pages vues</th><th>Inscriptions</th><th>Conversion</th></tr></thead><tbody>{data.media.map((item) => <tr key={item.label}><td><strong>{item.label}</strong></td><td>{item.visits}</td><td>{item.pageViews}</td><td>{item.registrations}</td><td>{percent(item.registrations / Math.max(1, item.visits))}</td></tr>)}</tbody></table></div> : <div className="management-empty compact"><strong>Aucune donnée d’acquisition</strong><p>Le tableau se remplira automatiquement avec les prochaines visites.</p></div>}
+      {data.media.some((item) => item.label === "Non attribué" && item.registrations > 0) && <p className="small-copy">« Non attribué » correspond aux inscriptions antérieures au suivi des conversions ou créées sans visite identifiable.</p>}
+    </section>
+
+    <section className="management-panel">
+      <div className="management-panel-head"><div><p className="eyebrow">Audience</p><h2>Trafic dans le temps</h2></div></div>
       {data.trend.length ? <div className="management-chart">{data.trend.map((item) => <div className="management-bar" key={item.label} title={`${item.label} : ${item.visitors} visiteurs, ${item.visits} visites, ${item.pageViews} pages vues`}><span style={{ height: `${Math.max(4, (item.pageViews / max) * 100)}%` }} /><small>{period === "day" ? item.label.slice(11, 16) : item.label.slice(5)}</small></div>)}</div> : <div className="management-empty"><strong>Aucune donnée sur cette période</strong><p>Changez de période ou revenez après les prochaines visites.</p></div>}
     </section>
 
