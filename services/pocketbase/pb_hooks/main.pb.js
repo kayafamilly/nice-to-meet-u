@@ -407,6 +407,7 @@ routerAdd("POST", "/api/ntmy/sessions", (e) => {
     session.set("topic", "");
     session.set("description", note);
     session.set("status", "scheduled");
+    session.set("created_at", dateValue(new Date()));
     // PocketBase assigns record ids on save by default. This room name must be
     // unique before the first save, so assign an ID from the allowed record-id
     // alphabet inside the transaction first.
@@ -653,6 +654,7 @@ routerAdd("POST", "/api/ntmy/moderation/reports", (e) => {
     report.set("reason", reason);
     report.set("details", optionalText(data.details, 1000));
     report.set("status", "open");
+    report.set("created_at", dateValue(new Date()));
     txApp.save(report);
     audit(txApp, e.auth.id, "moderation_reported", "moderation_report", report.id, { reason: reason, sessionId: sessionId });
     result = { id: report.id, status: "open" };
@@ -751,69 +753,97 @@ routerAdd("GET", "/api/ntmy/internal/management/data", (e) => {
   var search = String(query.search || "").trim().toLowerCase().slice(0, 100);
   var page = Math.max(1, Math.floor(Number(query.page || 1)) || 1);
   var perPage = Math.min(50, Math.max(10, Math.floor(Number(query.perPage || 25)) || 25));
-  function all(name, filter, sort, params) { return ntmy.findAllRecordsByFilter(e.app, name, filter || "id != ''", sort || "id", params || {}); }
+  function sqlOne(sql, definition, params) { var result = new DynamicModel(definition); var statement = e.app.db().newQuery(sql); if (params) statement.bind(params); statement.one(result); return result; }
+  function sqlAll(sql, definition, params) { var result = arrayOf(new DynamicModel(definition)); var statement = e.app.db().newQuery(sql); if (params) statement.bind(params); statement.all(result); return result; }
+  function countSql(sql, params) { return Number(sqlOne(sql, { value: 0 }, params).value || 0); }
   function languageName(id) { try { return e.app.findRecordById("languages", id).getString("name"); } catch (_) { return "Unknown"; } }
   function userName(id) { try { return e.app.findRecordById("users", id).getString("display_name"); } catch (_) { return "Deleted member"; } }
-  function paginate(items) { var start = (page - 1) * perPage; return { items: items.slice(start, start + perPage), page: page, perPage: perPage, totalItems: items.length, totalPages: Math.max(1, Math.ceil(items.length / perPage)) }; }
+  function paged(items, totalItems) { return { items: items, page: page, perPage: perPage, totalItems: totalItems, totalPages: Math.max(1, Math.ceil(totalItems / perPage)) }; }
   function participantDto(record) { return { id: record.id, userId: record.getString("user"), displayName: userName(record.getString("user")), role: record.getString("role") === "support" ? "native" : "practice", reservationStatus: record.getString("reservation_status"), joinedAt: record.getString("joined_at") || null, leftAt: record.getString("left_at") || null, absenceReason: record.getString("absence_reason") || null }; }
   function sessionDto(record) {
-    var participants = all("session_participants", "session = {:session}", "id", { session: record.id }).map(participantDto);
-    return { id: record.id, languageName: languageName(record.getString("language")), hostId: record.getString("host"), hostName: userName(record.getString("host")), startsAt: record.getString("starts_at"), endsAt: record.getString("ends_at"), note: record.getString("description") || record.getString("topic") || "", status: record.getString("status"), participantCount: participants.length, participants: participants, createdAt: record.getString("created") || null };
+    var participants = e.app.findRecordsByFilter("session_participants", "session = {:session}", "id", 10, 0, { session: record.id }).map(participantDto);
+    return { id: record.id, languageName: languageName(record.getString("language")), hostId: record.getString("host"), hostName: userName(record.getString("host")), startsAt: record.getString("starts_at"), endsAt: record.getString("ends_at"), note: record.getString("description") || record.getString("topic") || "", status: record.getString("status"), participantCount: participants.filter((item) => item.reservationStatus !== "cancelled").length, participants: participants, createdAt: record.getString("created_at") || null };
   }
-  if (section === "overview") {
-    var users = all("users"), profiles = all("user_profiles"), sessions = all("sessions"), participants = all("session_participants"), reports = all("moderation_reports"), visits = all("analytics_visits"), views = all("analytics_page_views");
-    return e.json(200, { visits: visits.length, pageViews: views.length, users: users.length, verifiedUsers: users.filter((r) => r.verified()).length, onboardedUsers: profiles.filter((r) => r.getBool("onboarding_complete")).length, sessions: sessions.length, scheduledSessions: sessions.filter((r) => r.getString("status") === "scheduled").length, completedSessions: sessions.filter((r) => r.getString("status") === "completed").length, cancelledSessions: sessions.filter((r) => r.getString("status") === "cancelled").length, attendedReservations: participants.filter((r) => r.getString("reservation_status") === "attended").length, noShows: participants.filter((r) => r.getString("reservation_status") === "no_show").length, openReports: reports.filter((r) => ["open", "reviewing"].indexOf(r.getString("status")) >= 0).length, recentSessions: sessions.sort((a, b) => String(b.getString("starts_at")).localeCompare(String(a.getString("starts_at")))).slice(0, 6).map(sessionDto) });
+  function userDto(user) {
+    var profile; try { profile = e.app.findFirstRecordByFilter("user_profiles", "user = {:user}", { user: user.id }); } catch (_) { profile = null; }
+    var languages = e.app.findRecordsByFilter("user_languages", "user = {:user}", "position,id", 20, 0, { user: user.id }).map((entry) => ({ name: languageName(entry.getString("language")), level: entry.getString("level"), native: entry.getBool("is_native") }));
+    var reservationStats = sqlOne("SELECT COUNT(*) AS total, COALESCE(SUM(reservation_status = 'attended'), 0) AS attended, COALESCE(SUM(reservation_status = 'no_show'), 0) AS noShow, COALESCE(SUM(reservation_status = 'cancelled'), 0) AS cancelled FROM session_participants WHERE user = {:user}", { total: 0, attended: 0, noShow: 0, cancelled: 0 }, { user: user.id });
+    return { id: user.id, email: user.email(), displayName: user.getString("display_name"), verified: user.verified(), createdAt: user.getString("created"), status: profile ? profile.getString("status") : "unknown", onboardingComplete: profile ? profile.getBool("onboarding_complete") : false, timeZone: profile ? profile.getString("time_zone") : "UTC", suspendedUntil: profile ? (profile.getString("no_show_suspended_until") || null) : null, languages: languages, sessionStats: { total: Number(reservationStats.total), attended: Number(reservationStats.attended), noShow: Number(reservationStats.noShow), cancelled: Number(reservationStats.cancelled) } };
+  }
+  function periodStats(since, until) {
+    var traffic = sqlOne("SELECT COUNT(*) AS visits, COUNT(DISTINCT visitor_hash) AS visitors FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until}", { visits: 0, visitors: 0 }, { since: since, until: until });
+    var pageViews = countSql("SELECT COUNT(*) AS value FROM analytics_page_views WHERE occurred_at >= {:since} AND occurred_at < {:until}", { since: since, until: until });
+    var registrations = sqlOne("SELECT COUNT(*) AS registrations, COALESCE(SUM(verified = 1), 0) AS verifiedAccounts FROM users WHERE created >= {:since} AND created < {:until}", { registrations: 0, verifiedAccounts: 0 }, { since: since, until: until });
+    var activation = sqlOne("SELECT COUNT(DISTINCT CASE WHEN p.onboarding_complete = 1 THEN u.id END) AS onboardedAccounts, COUNT(DISTINCT CASE WHEN sp.reservation_status IN ('reserved','attended','no_show') THEN u.id END) AS activatedAccounts FROM users u LEFT JOIN user_profiles p ON p.user = u.id LEFT JOIN session_participants sp ON sp.user = u.id WHERE u.created >= {:since} AND u.created < {:until}", { onboardedAccounts: 0, activatedAccounts: 0 }, { since: since, until: until });
+    var sessions = sqlOne("SELECT COUNT(DISTINCT s.id) AS sessions, COUNT(DISTINCT CASE WHEN s.status = 'scheduled' THEN s.id END) AS scheduledSessions, COUNT(DISTINCT CASE WHEN s.status = 'completed' THEN s.id END) AS completedSessions, COUNT(DISTINCT CASE WHEN s.status = 'cancelled' THEN s.id END) AS cancelledSessions, COUNT(CASE WHEN sp.reservation_status IN ('reserved','attended','no_show') THEN 1 END) AS reservations, COUNT(CASE WHEN sp.reservation_status = 'attended' THEN 1 END) AS attendances, COUNT(CASE WHEN sp.reservation_status = 'no_show' THEN 1 END) AS noShows, COUNT(CASE WHEN sp.reservation_status = 'cancelled' THEN 1 END) AS cancelledReservations FROM sessions s LEFT JOIN session_participants sp ON sp.session = s.id WHERE s.starts_at >= {:since} AND s.starts_at < {:until}", { sessions: 0, scheduledSessions: 0, completedSessions: 0, cancelledSessions: 0, reservations: 0, attendances: 0, noShows: 0, cancelledReservations: 0 }, { since: since, until: until });
+    var viableSessions = countSql("SELECT COUNT(*) AS value FROM (SELECT s.id FROM sessions s LEFT JOIN session_participants sp ON sp.session = s.id AND sp.reservation_status IN ('reserved','attended','no_show') WHERE s.starts_at >= {:since} AND s.starts_at < {:until} GROUP BY s.id HAVING COUNT(sp.id) >= 2)", { since: since, until: until });
+    return { visitors: Number(traffic.visitors), visits: Number(traffic.visits), pageViews: pageViews, registrations: Number(registrations.registrations), verifiedAccounts: Number(registrations.verifiedAccounts), onboardedAccounts: Number(activation.onboardedAccounts), activatedAccounts: Number(activation.activatedAccounts), sessions: Number(sessions.sessions), scheduledSessions: Number(sessions.scheduledSessions), completedSessions: Number(sessions.completedSessions), cancelledSessions: Number(sessions.cancelledSessions), reservations: Number(sessions.reservations), attendances: Number(sessions.attendances), noShows: Number(sessions.noShows), cancelledReservations: Number(sessions.cancelledReservations), viableSessions: viableSessions };
+  }
+  function metric(value, previous) { return { value: value, previous: previous, change: previous ? (value - previous) / previous : (value ? null : 0) }; }
+  function ratio(numerator, denominator) { return denominator ? numerator / denominator : 0; }
+  function breakdown(sql, definition, params) { return sqlAll(sql, definition, params).map((item) => { var result = {}; Object.keys(definition).forEach((key) => { result[key] = typeof definition[key] === "number" ? Number(item[key]) : String(item[key] || ""); }); return result; }); }
+  if (section === "overview" || section === "analytics") {
+    var period = ["day", "week", "month"].indexOf(String(query.period || "month")) >= 0 ? String(query.period || "month") : "month";
+    var duration = period === "day" ? 86400000 : (period === "week" ? 7 * 86400000 : 30 * 86400000);
+    var untilDate = new Date(), sinceDate = new Date(untilDate.getTime() - duration), previousSinceDate = new Date(sinceDate.getTime() - duration);
+    var since = ntmy.dateValue(sinceDate), until = ntmy.dateValue(untilDate), previousSince = ntmy.dateValue(previousSinceDate);
+    var current = periodStats(since, until), previous = periodStats(previousSince, since), metrics = {};
+    ["visitors", "visits", "pageViews", "registrations", "verifiedAccounts", "onboardedAccounts", "activatedAccounts", "sessions", "scheduledSessions", "completedSessions", "cancelledSessions", "reservations", "attendances", "noShows", "viableSessions"].forEach((key) => { metrics[key] = metric(current[key], previous[key]); });
+    var bucketVisit = period === "day" ? "substr(started_at, 1, 13) || ':00'" : "substr(started_at, 1, 10)";
+    var bucketView = period === "day" ? "substr(occurred_at, 1, 13) || ':00'" : "substr(occurred_at, 1, 10)";
+    var trend = breakdown("SELECT bucket AS label, COUNT(DISTINCT CASE WHEN visits = 1 THEN visitor END) AS visitors, SUM(visits) AS visits, SUM(pageViews) AS pageViews FROM (SELECT " + bucketVisit + " AS bucket, visitor_hash AS visitor, 1 AS visits, 0 AS pageViews FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} UNION ALL SELECT " + bucketView + " AS bucket, '' AS visitor, 0 AS visits, 1 AS pageViews FROM analytics_page_views WHERE occurred_at >= {:since} AND occurred_at < {:until}) GROUP BY bucket ORDER BY bucket", { label: "", visitors: 0, visits: 0, pageViews: 0 }, { since: since, until: until });
+    var sourceSql = "SELECT CASE WHEN TRIM(utm_source) != '' THEN utm_source WHEN TRIM(referrer_host) != '' THEN referrer_host ELSE 'Direct' END AS label, COUNT(*) AS value FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} GROUP BY label ORDER BY value DESC LIMIT 10";
+    var sources = breakdown(sourceSql, { label: "", value: 0 }, { since: since, until: until });
+    var campaigns = breakdown("SELECT utm_campaign AS label, COUNT(*) AS value FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} AND TRIM(utm_campaign) != '' GROUP BY utm_campaign ORDER BY value DESC LIMIT 10", { label: "", value: 0 }, { since: since, until: until });
+    var devices = breakdown("SELECT CASE WHEN TRIM(device) != '' THEN device ELSE 'other' END AS label, COUNT(*) AS value FROM analytics_visits WHERE started_at >= {:since} AND started_at < {:until} GROUP BY label ORDER BY value DESC", { label: "", value: 0 }, { since: since, until: until });
+    var pages = breakdown("SELECT path AS label, COUNT(*) AS value FROM analytics_page_views WHERE occurred_at >= {:since} AND occurred_at < {:until} GROUP BY path ORDER BY value DESC LIMIT 10", { label: "", value: 0 }, { since: since, until: until });
+    var languages = breakdown("SELECT COALESCE(l.name, 'Inconnue') AS label, COUNT(DISTINCT s.id) AS sessions, COUNT(CASE WHEN sp.reservation_status IN ('reserved','attended','no_show') THEN 1 END) AS reservations, COUNT(CASE WHEN sp.reservation_status = 'attended' THEN 1 END) AS attendances FROM sessions s LEFT JOIN languages l ON l.id = s.language LEFT JOIN session_participants sp ON sp.session = s.id WHERE s.starts_at >= {:since} AND s.starts_at < {:until} GROUP BY l.name ORDER BY sessions DESC, reservations DESC LIMIT 10", { label: "", sessions: 0, reservations: 0, attendances: 0 }, { since: since, until: until });
+    var timeSlots = breakdown("SELECT CASE WHEN CAST(strftime('%H', starts_at) AS INTEGER) < 6 THEN 'Nuit (UTC)' WHEN CAST(strftime('%H', starts_at) AS INTEGER) < 12 THEN 'Matin (UTC)' WHEN CAST(strftime('%H', starts_at) AS INTEGER) < 18 THEN 'Après-midi (UTC)' ELSE 'Soir (UTC)' END AS label, COUNT(DISTINCT s.id) AS sessions, COUNT(CASE WHEN sp.reservation_status IN ('reserved','attended','no_show') THEN 1 END) AS reservations, COUNT(CASE WHEN sp.reservation_status = 'attended' THEN 1 END) AS attendances FROM sessions s LEFT JOIN session_participants sp ON sp.session = s.id WHERE s.starts_at >= {:since} AND s.starts_at < {:until} GROUP BY label ORDER BY sessions DESC", { label: "", sessions: 0, reservations: 0, attendances: 0 }, { since: since, until: until });
+    var openReports = countSql("SELECT COUNT(*) AS value FROM moderation_reports WHERE status IN ('open','reviewing')");
+    var alerts = [];
+    if (metrics.visits.change !== null && metrics.visits.change <= -0.2) alerts.push({ tone: "warning", title: "Trafic en baisse", copy: "Les visites reculent d'au moins 20 % par rapport à la période précédente.", href: "/management/analytics" });
+    if (current.visits >= 10 && current.registrations === 0) alerts.push({ tone: "warning", title: "Aucune inscription", copy: "Le trafic récent ne produit aucune nouvelle inscription.", href: "/management/analytics" });
+    if (current.registrations >= 3 && ratio(current.verifiedAccounts, current.registrations) < 0.5) alerts.push({ tone: "warning", title: "Vérification faible", copy: "Moins d'une inscription sur deux a validé son adresse e-mail.", href: "/management/users" });
+    if (current.sessions >= 3 && ratio(current.reservations, current.sessions * 4) < 0.5) alerts.push({ tone: "info", title: "Sessions peu remplies", copy: "Le taux de remplissage est inférieur à 50 % sur la période.", href: "/management/sessions" });
+    if (openReports > 0) alerts.push({ tone: "danger", title: "Modération à traiter", copy: openReports + " signalement(s) attendent une revue.", href: "/management/moderation" });
+    if (!alerts.length) alerts.push({ tone: "success", title: "Aucun signal critique", copy: "Les principaux indicateurs ne demandent pas d'action immédiate.", href: "/management/system" });
+    var recentSessions = e.app.findRecordsByFilter("sessions", "id != ''", "-starts_at", 6, 0).map(sessionDto);
+    return e.json(200, { period: period, from: sinceDate.toISOString(), to: untilDate.toISOString(), metrics: metrics, current: current, ratios: { pagesPerVisit: ratio(current.pageViews, current.visits), visitToSignup: ratio(current.registrations, current.visits), verificationRate: ratio(current.verifiedAccounts, current.registrations), onboardingRate: ratio(current.onboardedAccounts, current.registrations), activationRate: ratio(current.activatedAccounts, current.registrations), fillRate: ratio(current.reservations, current.sessions * 4), attendanceRate: ratio(current.attendances, current.attendances + current.noShows), noShowRate: ratio(current.noShows, current.attendances + current.noShows) }, trend: trend, pages: pages, sources: sources, campaigns: campaigns, devices: devices, languages: languages, timeSlots: timeSlots, openReports: openReports, alerts: alerts, recentSessions: recentSessions });
   }
   if (section === "users") {
-    var userItems = all("users", "id != ''", "-created").map((user) => {
-      var profile; try { profile = e.app.findFirstRecordByFilter("user_profiles", "user = {:user}", { user: user.id }); } catch (_) { profile = null; }
-      var languages = all("user_languages", "user = {:user}", "position,id", { user: user.id }).map((entry) => ({ name: languageName(entry.getString("language")), level: entry.getString("level"), native: entry.getBool("is_native") }));
-      var reservations = all("session_participants", "user = {:user}", "id", { user: user.id });
-      return { id: user.id, email: user.email(), displayName: user.getString("display_name"), verified: user.verified(), createdAt: user.getString("created"), status: profile ? profile.getString("status") : "unknown", onboardingComplete: profile ? profile.getBool("onboarding_complete") : false, timeZone: profile ? profile.getString("time_zone") : "UTC", suspendedUntil: profile ? (profile.getString("no_show_suspended_until") || null) : null, languages: languages, sessionStats: { total: reservations.length, attended: reservations.filter((r) => r.getString("reservation_status") === "attended").length, noShow: reservations.filter((r) => r.getString("reservation_status") === "no_show").length, cancelled: reservations.filter((r) => r.getString("reservation_status") === "cancelled").length } };
-    }).filter((item) => !search || (item.email + " " + item.displayName).toLowerCase().indexOf(search) >= 0);
-    return e.json(200, paginate(userItems));
+    var userWhere = search ? " WHERE LOWER(email || ' ' || display_name) LIKE {:search}" : "";
+    var userParams = search ? { search: "%" + search + "%", limit: perPage, offset: (page - 1) * perPage } : { limit: perPage, offset: (page - 1) * perPage };
+    var userTotal = countSql("SELECT COUNT(*) AS value FROM users" + userWhere, userParams);
+    var userRows = sqlAll("SELECT id FROM users" + userWhere + " ORDER BY created DESC LIMIT {:limit} OFFSET {:offset}", { id: "" }, userParams);
+    return e.json(200, paged(userRows.map((row) => userDto(e.app.findRecordById("users", row.id))), userTotal));
   }
   if (section === "user") {
     var userId = ntmy.requiredText(String(query.id || ""), "user id", 30);
     var target = e.app.findRecordById("users", userId);
-    var result = all("users", "id = {:id}", "id", { id: target.id });
-    query.search = target.email();
-    var profile; try { profile = e.app.findFirstRecordByFilter("user_profiles", "user = {:user}", { user: target.id }); } catch (_) { profile = null; }
-    var userLanguages = all("user_languages", "user = {:user}", "position,id", { user: target.id }).map((entry) => ({ name: languageName(entry.getString("language")), level: entry.getString("level"), native: entry.getBool("is_native") }));
-    var userReservations = all("session_participants", "user = {:user}", "id", { user: target.id });
-    return e.json(200, { id: target.id, email: target.email(), displayName: target.getString("display_name"), verified: target.verified(), createdAt: target.getString("created"), status: profile ? profile.getString("status") : "unknown", onboardingComplete: profile ? profile.getBool("onboarding_complete") : false, timeZone: profile ? profile.getString("time_zone") : "UTC", suspendedUntil: profile ? (profile.getString("no_show_suspended_until") || null) : null, languages: userLanguages, sessionStats: { total: userReservations.length, attended: userReservations.filter((r) => r.getString("reservation_status") === "attended").length, noShow: userReservations.filter((r) => r.getString("reservation_status") === "no_show").length, cancelled: userReservations.filter((r) => r.getString("reservation_status") === "cancelled").length }, sessions: userReservations.map((participant) => sessionDto(e.app.findRecordById("sessions", participant.getString("session")))) });
+    var targetDto = userDto(target);
+    targetDto.sessions = e.app.findRecordsByFilter("session_participants", "user = {:user}", "-id", 100, 0, { user: target.id }).map((participant) => sessionDto(e.app.findRecordById("sessions", participant.getString("session"))));
+    return e.json(200, targetDto);
   }
   if (section === "sessions") {
-    var sessionItems = all("sessions", "id != ''", "-starts_at").map(sessionDto).filter((item) => !search || (item.languageName + " " + item.hostName + " " + item.status).toLowerCase().indexOf(search) >= 0);
-    return e.json(200, paginate(sessionItems));
+    var sessionWhere = search ? " WHERE LOWER(COALESCE(l.name,'') || ' ' || COALESCE(u.display_name,'') || ' ' || s.status) LIKE {:search}" : "";
+    var sessionParams = search ? { search: "%" + search + "%", limit: perPage, offset: (page - 1) * perPage } : { limit: perPage, offset: (page - 1) * perPage };
+    var sessionFrom = " FROM sessions s LEFT JOIN languages l ON l.id = s.language LEFT JOIN users u ON u.id = s.host";
+    var sessionTotal = countSql("SELECT COUNT(*) AS value" + sessionFrom + sessionWhere, sessionParams);
+    var sessionRows = sqlAll("SELECT s.id AS id" + sessionFrom + sessionWhere + " ORDER BY s.starts_at DESC LIMIT {:limit} OFFSET {:offset}", { id: "" }, sessionParams);
+    return e.json(200, paged(sessionRows.map((row) => sessionDto(e.app.findRecordById("sessions", row.id))), sessionTotal));
   }
   if (section === "session") return e.json(200, sessionDto(e.app.findRecordById("sessions", ntmy.requiredText(String(query.id || ""), "session id", 30))));
   if (section === "moderation") {
-    var reportItems = all("moderation_reports", "id != ''", "-created").map((report) => ({ id: report.id, reporterId: report.getString("reporter"), reporterName: userName(report.getString("reporter")), reportedUserId: report.getString("reported_user") || null, reportedUserName: report.getString("reported_user") ? userName(report.getString("reported_user")) : null, sessionId: report.getString("session") || null, reason: report.getString("reason"), details: report.getString("details"), status: report.getString("status"), createdAt: report.getString("created") }));
-    return e.json(200, paginate(reportItems));
-  }
-  if (section === "analytics") {
-    var days = Math.min(90, Math.max(7, Math.floor(Number(query.days || 30)) || 30));
-    var customFrom = /^\d{4}-\d{2}-\d{2}$/.test(String(query.from || "")) ? String(query.from) : "";
-    var customTo = /^\d{4}-\d{2}-\d{2}$/.test(String(query.to || "")) ? String(query.to) : "";
-    var sinceDate = customFrom ? new Date(customFrom + "T00:00:00.000Z") : new Date(Date.now() - days * 86400000);
-    var untilDate = customTo ? new Date(customTo + "T00:00:00.000Z") : new Date();
-    if (customTo) untilDate.setUTCDate(untilDate.getUTCDate() + 1);
-    if (!Number.isFinite(sinceDate.getTime()) || !Number.isFinite(untilDate.getTime()) || sinceDate >= untilDate || untilDate.getTime() - sinceDate.getTime() > 90 * 86400000) throw new BadRequestError("Analytics period must be valid and at most 90 days");
-    var since = ntmy.dateValue(sinceDate), until = ntmy.dateValue(untilDate);
-    var fromDay = since.slice(0, 10), toDay = new Date(untilDate.getTime() - 1).toISOString().slice(0, 10);
-    var daily = all("analytics_daily", "day >= {:fromDay} && day <= {:toDay}", "day", { fromDay: fromDay, toDay: toDay }).map((r) => ({ day: r.getString("day"), visitors: r.getInt("visitors"), visits: r.getInt("visits"), pageViews: r.getInt("page_views") }));
-    var rangeVisits = all("analytics_visits", "started_at >= {:since} && started_at < {:until}", "-started_at", { since: since, until: until });
-    var rangeViews = all("analytics_page_views", "occurred_at >= {:since} && occurred_at < {:until}", "-occurred_at", { since: since, until: until });
-    function group(items, getter) { var counts = {}; items.forEach((item) => { var key = getter(item) || "Direct / unknown"; counts[key] = (counts[key] || 0) + 1; }); return Object.keys(counts).map((key) => ({ label: key, value: counts[key] })).sort((a, b) => b.value - a.value).slice(0, 12); }
-    var registered = all("audit_logs", "action = 'account_registered' && created >= {:since} && created < {:until}", "id", { since: since, until: until }).length, verified = all("audit_logs", "action = 'account_email_verified' && created >= {:since} && created < {:until}", "id", { since: since, until: until }).length;
-    return e.json(200, { days: days, from: fromDay, to: toDay, daily: daily, totals: { visitors: daily.reduce((n, d) => n + d.visitors, 0), visits: rangeVisits.length, pageViews: rangeViews.length, registrations: registered, verifiedAccounts: verified }, pages: group(rangeViews, (r) => r.getString("path")), sources: group(rangeVisits, (r) => r.getString("utm_source") || r.getString("referrer_host") || "Direct"), devices: group(rangeVisits, (r) => r.getString("device")), conversion: { registrationRate: rangeVisits.length ? registered / rangeVisits.length : 0, verificationRate: registered ? verified / registered : 0 } });
+    var reportTotal = countSql("SELECT COUNT(*) AS value FROM moderation_reports");
+    var reports = e.app.findRecordsByFilter("moderation_reports", "id != ''", "-created_at,-id", perPage, (page - 1) * perPage);
+    var reportItems = reports.map((report) => ({ id: report.id, reporterId: report.getString("reporter"), reporterName: userName(report.getString("reporter")), reportedUserId: report.getString("reported_user") || null, reportedUserName: report.getString("reported_user") ? userName(report.getString("reported_user")) : null, sessionId: report.getString("session") || null, reason: report.getString("reason"), details: report.getString("details"), status: report.getString("status"), createdAt: report.getString("created_at") || null }));
+    return e.json(200, paged(reportItems, reportTotal));
   }
   if (section === "system") {
-    var failedNotifications = all("notifications", "delivery_status = 'failed'", "-deliver_after", {}).length;
-    var failedWebhooks = all("webhook_events", "processing_status = 'failed'", "-processed_at", {}).length;
-    var lastWebhook = all("webhook_events", "id != ''", "-processed_at", {})[0] || null;
-    var heartbeats = all("management_service_heartbeats", "id != ''", "service", {});
+    var failedNotifications = countSql("SELECT COUNT(*) AS value FROM notifications WHERE delivery_status = 'failed'");
+    var failedWebhooks = countSql("SELECT COUNT(*) AS value FROM webhook_events WHERE processing_status = 'failed'");
+    var lastWebhook = e.app.findRecordsByFilter("webhook_events", "id != ''", "-processed_at", 1, 0)[0] || null;
+    var heartbeats = e.app.findRecordsByFilter("management_service_heartbeats", "id != ''", "service", 10, 0);
     var heartbeatMap = {}; heartbeats.forEach((heartbeat) => { heartbeatMap[heartbeat.getString("service")] = heartbeat.getString("last_seen_at"); });
     return e.json(200, { failedNotifications: failedNotifications, failedWebhooks: failedWebhooks, lastWebhookAt: lastWebhook ? lastWebhook.getString("processed_at") : null, notificationWorkerLastSeenAt: heartbeatMap.notification_worker || null, liveKitWorkerLastSeenAt: heartbeatMap.livekit_worker || null });
   }

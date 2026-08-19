@@ -49,7 +49,7 @@ pnpm --dir "$repo_root" --filter @ntmy/web build
 # Place them beside server.js so the native systemd process serves the same
 # production build without invoking `next start`.
 standalone_web="$repo_root/apps/web/.next/standalone/apps/web"
-mkdir -p "$standalone_web/.next"
+mkdir -p "$standalone_web/.next/cache"
 cp -R "$repo_root/apps/web/.next/static" "$standalone_web/.next/static"
 if [ -d "$repo_root/apps/web/public" ]; then
   cp -R "$repo_root/apps/web/public" "$standalone_web/public"
@@ -57,6 +57,7 @@ fi
 
 # Secrets and PocketBase data remain outside the release checkout.
 sudo install -d -m 750 -o ntmy -g ntmy /etc/nicetomeetu /var/lib/nicetomeetu/$DEPLOYMENT/pocketbase
+sudo chown -R ntmy:ntmy "$standalone_web/.next/cache"
 sudo install -m 640 -o root -g ntmy "$env_file" "/etc/nicetomeetu/$DEPLOYMENT.env"
 sudo chown root:ntmy "$repo_root/infra/vps/rendered/$DEPLOYMENT/livekit.yaml"
 sudo chmod 640 "$repo_root/infra/vps/rendered/$DEPLOYMENT/livekit.yaml"

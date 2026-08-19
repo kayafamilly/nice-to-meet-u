@@ -19,7 +19,7 @@ function findAllRecordsByFilter(app, collection, filter, sort, params) {
     offset += page.length;
   }
 }
-function audit(app, actor, action, entityType, entityId, metadata) { var record = new Record(app.findCollectionByNameOrId("audit_logs")); record.set("actor", actor || ""); record.set("action", action); record.set("entity_type", entityType); record.set("entity_id", entityId); record.set("metadata", metadata || {}); app.save(record); }
+function audit(app, actor, action, entityType, entityId, metadata) { var record = new Record(app.findCollectionByNameOrId("audit_logs")); record.set("actor", actor || ""); record.set("action", action); record.set("entity_type", entityType); record.set("entity_id", entityId); record.set("metadata", metadata || {}); record.set("occurred_at", dateValue(new Date())); app.save(record); }
 function profileFor(app, userId) { return app.findFirstRecordByFilter("user_profiles", "user = {:user}", { user: userId }); }
 function languageFor(app, languageId) { var language = app.findRecordById("languages", languageId); if (!language.getBool("is_active")) throw new BadRequestError("Language is unavailable"); return language; }
 function relationExists(app, userId, languageId, nativeOnly) { var filter = "user = {:user} && language = {:language}"; if (nativeOnly) filter += " && is_native = true"; try { app.findFirstRecordByFilter("user_languages", filter, { user: userId, language: languageId }); return true; } catch (_) { return false; } }

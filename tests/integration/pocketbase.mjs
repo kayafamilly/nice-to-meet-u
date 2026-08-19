@@ -149,8 +149,12 @@ async function expectPrivateManagementInfrastructure(adminToken) {
   assert(accepted.status === 201 && accepted.body?.duplicate === false, `Analytics event was not accepted: ${JSON.stringify(accepted.body)}`);
   const duplicate = await request("/api/ntmy/internal/analytics/track", { method: "POST", headers, body: JSON.stringify(event) });
   assert(duplicate.status === 200 && duplicate.body?.duplicate === true, "Analytics event deduplication failed");
-  const overview = await request("/api/ntmy/internal/management/data?section=overview", { headers });
-  assert(overview.status === 200 && typeof overview.body?.users === "number" && !Object.hasOwn(overview.body, "passwordHash"), "Management overview did not return a safe DTO");
+  for (const period of ["day", "week", "month"]) {
+    const overview = await request(`/api/ntmy/internal/management/data?section=overview&period=${period}`, { headers });
+    assert(overview.status === 200 && overview.body?.period === period && typeof overview.body?.current?.visits === "number" && Array.isArray(overview.body?.alerts) && !Object.hasOwn(overview.body, "passwordHash"), `Management overview did not return a safe ${period} DTO: ${JSON.stringify(overview.body)}`);
+  }
+  const analytics = await request("/api/ntmy/internal/management/data?section=analytics&period=week", { headers });
+  assert(analytics.status === 200 && analytics.body?.metrics?.visits?.value >= 1 && analytics.body?.sources?.some((item) => item.label === "integration"), `Management analytics did not expose the tracked acquisition signal: ${JSON.stringify(analytics.body)}`);
   const authFingerprint = createHash("sha256").update(`auth-${suffix}`).digest("hex");
   for (let attempt = 0; attempt < 5; attempt += 1) await request("/api/ntmy/internal/management/auth-event", { method: "POST", headers, body: JSON.stringify({ fingerprint: authFingerprint, outcome: "failure" }) });
   const lock = await request(`/api/ntmy/internal/management/auth-status?fingerprint=${authFingerprint}`, { headers });
