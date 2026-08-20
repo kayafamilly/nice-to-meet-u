@@ -805,12 +805,12 @@ routerAdd("GET", "/api/ntmy/internal/management/data", (e) => {
     var signal = "LOWER(CASE WHEN " + cleanSource + " != '' THEN " + cleanSource + " ELSE " + cleanReferrer + " END)";
     var fallback = "CASE WHEN " + cleanSource + " != '' THEN " + cleanSource + " ELSE " + cleanReferrer + " END";
     return "CASE WHEN " + signal + " = '' THEN 'Direct' " +
-      "WHEN " + signal + " LIKE '%tiktok%' THEN 'TikTok' " +
-      "WHEN " + signal + " LIKE '%instagram%' THEN 'Instagram' " +
-      "WHEN " + signal + " LIKE '%facebook%' OR " + signal + " = 'fb' THEN 'Facebook' " +
+      "WHEN " + signal + " LIKE '%tiktok%' OR " + signal + " = 'tt' THEN 'TikTok' " +
+      "WHEN " + signal + " LIKE '%instagram%' OR " + signal + " = 'ig' OR " + signal + " = 'insta' THEN 'Instagram' " +
+      "WHEN " + signal + " LIKE '%facebook%' OR " + signal + " = 'fb' OR " + signal + " = 'meta' THEN 'Facebook' " +
       "WHEN " + signal + " LIKE '%reddit%' THEN 'Reddit' " +
       "WHEN " + signal + " LIKE '%google%' OR " + signal + " LIKE '%googleadservices%' THEN 'Google' " +
-      "WHEN " + signal + " LIKE '%youtube%' OR " + signal + " = 'youtu.be' THEN 'YouTube' " +
+      "WHEN " + signal + " LIKE '%youtube%' OR " + signal + " = 'youtu.be' OR " + signal + " = 'yt' THEN 'YouTube' " +
       "WHEN " + signal + " LIKE '%linkedin%' THEN 'LinkedIn' " +
       "WHEN " + signal + " LIKE '%twitter%' OR " + signal + " = 'x' OR " + signal + " LIKE '%x.com%' THEN 'X / Twitter' " +
       "WHEN " + signal + " LIKE '%bing%' THEN 'Bing' " +
